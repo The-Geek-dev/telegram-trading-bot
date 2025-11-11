@@ -16,7 +16,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 if not BOT_TOKEN:
     print("❌ BOT_TOKEN not found!")
     exit(1)
-ADMIN_USER_IDS = [990809301,8489892403]
+ADMIN_USER_IDS = [990809301,8489892403,7008942704]
 
 # Trading Configuration
 SUPPORTED_COINS = ["BTC", "ETH", "BNB", "XRP", "ADA", "DOGE", "SOL", "DOT", "MATIC", "AVAX", "LINK", "UNI"]
@@ -2324,3 +2324,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
