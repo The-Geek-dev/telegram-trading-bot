@@ -10,82 +10,28 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.constants import ChatAction
 import requests
-from threading import Thread
-import time
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey
+import base58
+
 
 # ===== CONFIGURATION =====
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+BOT_TOKEN = BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     print("❌ BOT_TOKEN not found!")
     exit(1)
-ADMIN_USER_IDS = [990809301,8489892403,7008942704,7968183202]
+ADMIN_USER_IDS = [990809301,8489892403]
 
 # Trading Configuration
 SUPPORTED_COINS = ["BTC", "ETH", "BNB", "XRP", "ADA", "DOGE", "SOL", "DOT", "MATIC", "AVAX", "LINK", "UNI"]
-
-# Memecoin configuration
-MEMECOINS = []
-MEMECOIN_IDS = {}
+# Solana Memecoins - will be updated hourly
+SOLANA_MEMECOINS = {}
+TRENDING_MEMECOINS = {}
+MEMECOIN_BY_ADDRESS = {}  # Map contract addresses to symbols
 MEMECOIN_LAST_UPDATE = None
-MEMECOIN_UPDATE_INTERVAL = 3600  # Update every hour
-MINIMUM_DEPOSIT = 150 # Minimum $150 deposit
+MEMECOIN_UPDATE_INTERVAL = 3600  # 1 hour in seconds
+MINIMUM_DEPOSIT = 10  # Minimum $10 deposit
 TRADING_FEE = 0.001  # 0.1% trading fee
-# Access Token System
-ACCESS_TOKENS = [
-    "ASTRA-7K9M-2X4P-8N6R",
-    "ASTRA-3R5T-9W2E-7Y1U",
-    "ASTRA-6H8J-4K5L-1M3N",
-    "ASTRA-2Q9W-8E7R-5T4Y",
-    "ASTRA-1A3S-7D6F-9G8H",
-    "ASTRA-5Z4X-2C8V-3B7N",
-    "ASTRA-9L8K-6J5H-4G3F",
-    "ASTRA-7D2S-1A4Q-8W9E",
-    "ASTRA-3R6T-5Y9U-2I8O",
-    "ASTRA-8P4L-7K3J-6H5G",
-    "ASTRA-2F1D-9S8A-4Q3W",
-    "ASTRA-6E5R-3T2Y-7U8I",
-    "ASTRA-1O9P-8L7K-5J4H",
-    "ASTRA-4G3F-2D1S-9A8Q",
-    "ASTRA-7W6E-5R4T-3Y2U",
-    "ASTRA-9I8O-6P5L-2K1J",
-    "ASTRA-3H4G-7F6D-1S2A",
-    "ASTRA-8Q9W-4E3R-7T6Y",
-    "ASTRA-2U1I-5O6P-9L8K",
-    "ASTRA-6J7H-3G4F-8D9S",
-    "ASTRA-1A2Q-7W8E-4R5T",
-    "ASTRA-5Y6U-2I3O-9P8L",
-    "ASTRA-9K8J-6H7G-3F4D",
-    "ASTRA-4S5A-1Q2W-8E7R",
-    "ASTRA-7T6Y-3U4I-2O1P",
-    "ASTRA-8L9K-5J6H-4G3F",
-    "ASTRA-2D3S-9A8Q-7W6E",
-    "ASTRA-6R5T-1Y2U-8I9O",
-    "ASTRA-3P4L-7K8J-2H1G",
-    "ASTRA-9F8D-4S5A-6Q7W",
-    "ASTRA-1E2R-8T9Y-5U6I",
-    "ASTRA-7O6P-3L4K-9J8H",
-    "ASTRA-4G5F-2D3S-1A8Q",
-    "ASTRA-8W9E-6R7T-4Y5U",
-    "ASTRA-2I3O-9P8L-7K6J",
-    "ASTRA-6H7G-4F5D-3S2A",
-    "ASTRA-1Q2W-8E9R-5T4Y",
-    "ASTRA-5U6I-2O3P-9L7K",
-    "ASTRA-9J8H-6G7F-4D3S",
-    "ASTRA-3A4Q-1W2E-8R9T",
-    "ASTRA-7Y8U-5I6O-2P1L",
-    "ASTRA-8K9J-4H5G-7F6D",
-    "ASTRA-2S3A-9Q8W-6E5R",
-    "ASTRA-6T7Y-3U4I-1O2P",
-    "ASTRA-9L8K-5J6H-4G7F",
-    "ASTRA-4D5S-2A3Q-8W9E",
-    "ASTRA-1R2T-7Y8U-5I6O",
-    "ASTRA-8P9L-4K5J-3H2G",
-    "ASTRA-3F4D-9S8A-7Q6W",
-    "ASTRA-7E6R-2T3Y-8U9I",
-    "ASTRA-5O6P-1L2K-9J8H"
-]
-
-used_tokens = {}  # Track which tokens are used by which user
 
 # ===== DATA STORAGE =====
 user_data = {}
@@ -101,40 +47,133 @@ bot_stats = {
     "total_volume": 0,
     "start_time": datetime.now()
 }
+# ===== TOKEN SYSTEM =====
+VALID_TOKENS = [
+    "ASTRA-2K9F-8H3L-9M3P",
+    "ASTRA-7Q4R-3N8W-5K1X",
+    "ASTRA-6P2M-9L4H-7R3Y",
+    "ASTRA-4W8N-2K5Q-1M9Z",
+    "ASTRA-3H7R-6P9L-8N2A",
+    "ASTRA-9M4K-7W2Q-3H5B",
+    "ASTRA-5L8P-4N6R-2W9C",
+    "ASTRA-1Q3M-8K7H-6P4D",
+    "ASTRA-8R6N-5L3W-9M2E",
+    "ASTRA-2P9K-7H4Q-1W8F",
+    "ASTRA-6W3L-9R5M-4K7G",
+    "ASTRA-4K7P-2M8N-5W3H",
+    "ASTRA-7H9R-6L2K-8P4I",
+    "ASTRA-3M5W-1Q9N-7R6J",
+    "ASTRA-9P2K-4H7L-3W5K",
+    "ASTRA-5R8M-7K3P-2N9L",
+    "ASTRA-1L6W-9H4R-8K3M",
+    "ASTRA-8K3P-5M7N-1R9N",
+    "ASTRA-2W9L-6R4H-7P3O",
+    "ASTRA-6H4M-3K8R-9L2P",
+    "ASTRA-4P7W-1M5K-8R6Q",
+    "ASTRA-7M2L-9K6P-3H8R",
+    "ASTRA-3R5K-8W2M-4P7S",
+    "ASTRA-9L6H-2P4R-7M3T",
+    "ASTRA-5K9M-6R3W-1L8U",
+    "ASTRA-1P4L-7M9K-5R2V",
+    "ASTRA-8W7R-3K5M-9P6W",
+    "ASTRA-2M3K-6L8P-4W9X",
+    "ASTRA-6R9W-1M4L-8K7Y",
+    "ASTRA-4L2P-9R6M-3K5Z",
+    "ASTRA-7K8M-5W3R-2P9A1",
+    "ASTRA-3P6L-8M2K-9W4B1",
+    "ASTRA-9R4K-7P5M-1L8C1",
+    "ASTRA-5M7W-2K9R-6P3D1",
+    "ASTRA-1K5L-8R3M-4W9E1",
+    "ASTRA-8P2M-6K7R-3L5F1",
+    "ASTRA-2R9K-4M6W-7P8G1",
+    "ASTRA-6L3P-1K9M-5R7H1",
+    "ASTRA-4W8R-9L2K-8M6I1",
+    "ASTRA-7M5K-3P8L-2W9J1",
+    "ASTRA-3K9M-6R4P-1L7K1",
+    "ASTRA-9W2L-5M8K-7R4L1",
+    "ASTRA-5P6R-8K3M-4W2M1",
+    "ASTRA-1M8K-7L5R-9P3N1",
+    "ASTRA-8L4P-2R9M-6K7O1",
+    "ASTRA-2K7M-5W3L-8R9P1",
+    "ASTRA-6M9R-1P4K-3L8Q1",
+    "ASTRA-4R3K-7M6P-9W2R1",
+    "ASTRA-7L8W-4K2M-5P9S1",
+    "ASTRA-3W6M-9R5K-2L8T1"
+]
 
-# ===== WALLET GENERATION =====
-def generate_wallet_address(coin, user_id):
-    """Generate a deterministic wallet address (for demo purposes)"""
-    seed = f"{user_id}_{coin}_{secrets.token_hex(16)}"
-    hash_obj = hashlib.sha256(seed.encode())
-    hash_hex = hash_obj.hexdigest()
-    
-    if coin == "BTC":
-        return f"bc1q{hash_hex[:40]}"
-    elif coin == "ETH":
-        return f"0x{hash_hex[:40]}"
-    elif coin == "USDT":
-        return f"T{hash_hex[:33]}"
-    else:
-        return f"{coin}{hash_hex[:40]}"
+USED_TOKENS = set()  # Track used tokens
+
+
+# ===== WALLET GENERATION (FIXED) =====
+
+# ===== CORRECT PHANTOM-COMPATIBLE WALLET GENERATION =====
+# Install: pip install mnemonic solders
 
 def generate_seed_phrase():
-    """Generate a 12-word seed phrase (simplified version)"""
-    words = [
-        "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract",
-        "absurd", "abuse", "access", "accident", "account", "accuse", "achieve", "acid",
-        "acoustic", "acquire", "across", "act", "action", "actor", "actress", "actual",
-        "adapt", "add", "addict", "address", "adjust", "admit", "adult", "advance",
-        "advice", "aerobic", "afford", "afraid", "again", "age", "agent", "agree",
-        "ahead", "aim", "air", "airport", "aisle", "alarm", "album", "alcohol"
-    ]
-    
-    return " ".join(random.sample(words, 12))
+    """Generate a 12-word seed phrase"""
+    from mnemonic import Mnemonic
+    mnemo = Mnemonic("english")
+    return mnemo.generate(strength=128)
+
+
+def generate_wallet_address(user_id, seed_phrase):
+    """Generate Solana wallet address - EXACTLY like Phantom using BIP44 derivation"""
+    try:
+        from mnemonic import Mnemonic
+        from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins, Bip44Changes
+        from solders.keypair import Keypair
+        
+        # Generate seed from mnemonic (BIP39)
+        seed_bytes = Bip39SeedGenerator(seed_phrase).Generate()
+        
+        # Derive Solana key using BIP44 path: m/44'/501'/0'/0'
+        # 501 is Solana's coin type
+        bip44_mst = Bip44.FromSeed(seed_bytes, Bip44Coins.SOLANA)
+        bip44_acc = bip44_mst.Purpose().Coin().Account(0)
+        bip44_chg = bip44_acc.Change(Bip44Changes.CHAIN_EXT)
+        bip44_addr = bip44_chg.AddressIndex(0)
+        
+        # Get the private key (32 bytes)
+        private_key_bytes = bip44_addr.PrivateKey().Raw().ToBytes()
+        
+        # Create Solana keypair from private key
+        keypair = Keypair.from_seed(private_key_bytes)
+        
+        # Get public key (wallet address)
+        wallet_address = str(keypair.pubkey())
+        
+        return wallet_address
+        
+    except Exception as e:
+        print(f"⚠️ Wallet generation error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+def verify_wallet_matches_phantom(seed_phrase):
+    """Test function to verify wallet matches Phantom"""
+    address = generate_wallet_address(0, seed_phrase)
+    print(f"\n✅ Generated Address: {address}")
+    print(f"\n📝 Seed Phrase:")
+    print(f"   {seed_phrase}")
+    print(f"\n💡 Import this into Phantom - addresses should match!")
+    return address
+
+
+
+
+
 
 # ===== PRICE FETCHING =====
 def get_crypto_price(symbol):
     """Get real-time crypto price from CoinGecko API"""
     try:
+        # Check if it's a memecoin first
+        memecoin_price = get_memecoin_price(symbol)
+        if memecoin_price is not None:
+            return memecoin_price
+        
+        # Otherwise check major coins
         coin_ids = {
             "BTC": "bitcoin",
             "ETH": "ethereum", 
@@ -147,11 +186,8 @@ def get_crypto_price(symbol):
             "MATIC": "matic-network",
             "AVAX": "avalanche-2",
             "LINK": "chainlink",
-            "UNI": "uniswap",
+            "UNI": "uniswap"
         }
-        
-        # Add dynamic memecoins
-        coin_ids.update(MEMECOIN_IDS)
         
         coin_id = coin_ids.get(symbol.upper())
         if not coin_id:
@@ -174,85 +210,183 @@ def get_all_prices():
         if price:
             prices[coin] = price
     return prices
-# Add after get_all_prices() function
 
-def fetch_trending_memecoins():
-    """Fetch trending memecoins from CoinGecko"""
+def fetch_solana_memecoins():
+    """Fetch top memecoins AND trending memecoins from CoinGecko"""
+    global SOLANA_MEMECOINS, TRENDING_MEMECOINS, MEMECOIN_BY_ADDRESS, MEMECOIN_LAST_UPDATE
+    
+    all_memecoins = {}
+    
     try:
-        # Get trending coins
-        url = "https://api.coingecko.com/api/v3/search/trending"
-        response = requests.get(url, timeout=10)
+        # 1. Get top 20 Solana memecoins by market cap
+        print("📊 Fetching top Solana memecoins...")
+        url = "https://api.coingecko.com/api/v3/coins/markets"
+        params = {
+            "vs_currency": "usd",
+            "category": "solana-meme-coins",
+            "order": "market_cap_desc",
+            "per_page": 20,
+            "page": 1,
+            "sparkline": False
+        }
+        
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
-        memecoins = []
-        memecoin_ids = {}
+        for coin in data:
+            symbol = coin['symbol'].upper()
+            all_memecoins[symbol] = {
+                "id": coin['id'],
+                "name": coin['name'],
+                "symbol": symbol,
+                "price": coin['current_price'],
+                "market_cap": coin.get('market_cap', 0),
+                "price_change_24h": coin.get('price_change_percentage_24h', 0),
+                "volume_24h": coin.get('total_volume', 0),
+                "image": coin.get('image', ''),
+                "type": "top"
+            }
         
-        # Extract meme coins from trending
-        for item in data.get('coins', []):
-            coin = item.get('item', {})
-            symbol = coin.get('symbol', '').upper()
-            coin_id = coin.get('id', '')
+        # 2. Get trending coins (last 24h)
+        print("🔥 Fetching trending memecoins...")
+        trending_url = "https://api.coingecko.com/api/v3/search/trending"
+        trending_response = requests.get(trending_url, timeout=15)
+        trending_data = trending_response.json()
+        
+        trending_coins = {}
+        for item in trending_data.get('coins', [])[:15]:  # Get top 15 trending
+            coin_data = item.get('item', {})
+            coin_id = coin_data.get('id')
             
-            if symbol and coin_id:
-                memecoins.append(symbol)
-                memecoin_ids[symbol] = coin_id
+            # Check if it's a Solana token
+            if coin_id:
+                # Get detailed info
+                detail_url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+                try:
+                    detail_response = requests.get(detail_url, timeout=10)
+                    detail = detail_response.json()
+                    
+                    # Check if it's on Solana
+                    platforms = detail.get('platforms', {})
+                    if 'solana' in platforms or any('solana' in str(p).lower() for p in platforms.keys()):
+                        symbol = coin_data.get('symbol', '').upper()
+                        
+                        trending_coins[symbol] = {
+                            "id": coin_id,
+                            "name": coin_data.get('name', ''),
+                            "symbol": symbol,
+                            "price": detail.get('market_data', {}).get('current_price', {}).get('usd', 0),
+                            "market_cap": detail.get('market_data', {}).get('market_cap', {}).get('usd', 0),
+                            "price_change_24h": detail.get('market_data', {}).get('price_change_percentage_24h', 0),
+                            "volume_24h": detail.get('market_data', {}).get('total_volume', {}).get('usd', 0),
+                            "image": coin_data.get('large', ''),
+                            "type": "trending",
+                            "contract_address": platforms.get('solana', '')
+                        }
+                        
+                        # Add to address mapping
+                        if platforms.get('solana'):
+                            MEMECOIN_BY_ADDRESS[platforms.get('solana').lower()] = symbol
+                        
+                        # Merge into all_memecoins (avoid duplicates)
+                        if symbol not in all_memecoins:
+                            all_memecoins[symbol] = trending_coins[symbol]
+                        else:
+                            # Update with trending flag
+                            all_memecoins[symbol]['type'] = 'both'
+                            if 'contract_address' in trending_coins[symbol]:
+                                all_memecoins[symbol]['contract_address'] = trending_coins[symbol]['contract_address']
                 
-                if len(memecoins) >= 15:
-                    break
+                except Exception as e:
+                    print(f"Error fetching detail for {coin_id}: {e}")
+                    continue
         
-        # Always include these popular memecoins as fallback
-        popular_memecoins = {
-            "DOGE": "dogecoin",
-            "SHIB": "shiba-inu", 
-            "PEPE": "pepe",
-            "FLOKI": "floki",
-            "BONK": "bonk",
-            "WIF": "dogwifcoin",
-        }
+        TRENDING_MEMECOINS = trending_coins
+        SOLANA_MEMECOINS = all_memecoins
+        MEMECOIN_LAST_UPDATE = datetime.now()
         
-        # Merge popular with trending
-        for symbol, coin_id in popular_memecoins.items():
-            if symbol not in memecoins:
-                memecoins.append(symbol)
-                memecoin_ids[symbol] = coin_id
-        
-        return memecoins[:20], memecoin_ids
+        print(f"✅ Updated {len(all_memecoins)} total memecoins ({len(trending_coins)} trending) at {MEMECOIN_LAST_UPDATE.strftime('%H:%M:%S')}")
+        return all_memecoins
         
     except Exception as e:
-        print(f"Error fetching trending memecoins: {e}")
-        return ["DOGE", "SHIB", "PEPE", "FLOKI", "BONK", "WIF"], {
-            "DOGE": "dogecoin",
-            "SHIB": "shiba-inu",
-            "PEPE": "pepe",
-            "FLOKI": "floki",
-            "BONK": "bonk",
-            "WIF": "dogwifcoin"
-        }
+        print(f"❌ Error fetching Solana memecoins: {e}")
+        return SOLANA_MEMECOINS
 
-def update_memecoins():
-    """Update the memecoin list"""
-    global MEMECOINS, MEMECOIN_LAST_UPDATE, MEMECOIN_IDS
+def get_memecoin_price(symbol):
+    """Get price for a specific memecoin"""
+    global SOLANA_MEMECOINS, MEMECOIN_LAST_UPDATE
     
-    print("🔄 Updating memecoin list...")
-    memecoins, memecoin_ids = fetch_trending_memecoins()
+    # Update if data is stale or empty
+    if (not SOLANA_MEMECOINS or 
+        MEMECOIN_LAST_UPDATE is None or 
+        (datetime.now() - MEMECOIN_LAST_UPDATE).total_seconds() > MEMECOIN_UPDATE_INTERVAL):
+        fetch_solana_memecoins()
     
-    MEMECOINS = memecoins
-    MEMECOIN_IDS = memecoin_ids
-    MEMECOIN_LAST_UPDATE = datetime.now()
-    
-    print(f"✅ Updated memecoins: {', '.join(MEMECOINS)}")
-    
-    return memecoins
+    if symbol.upper() in SOLANA_MEMECOINS:
+        return SOLANA_MEMECOINS[symbol.upper()]["price"]
+    return None
 
-def memecoin_updater_background():
-    """Background thread to update memecoins regularly"""
-    while True:
-        try:
-            update_memecoins()
-            time.sleep(MEMECOIN_UPDATE_INTERVAL)
-        except Exception as e:
-            print(f"Error in memecoin updater: {e}")
-            time.sleep(300)
+def should_update_memecoins():
+    """Check if memecoins need updating"""
+    global MEMECOIN_LAST_UPDATE
+    
+    if MEMECOIN_LAST_UPDATE is None:
+        return True
+    
+    elapsed = (datetime.now() - MEMECOIN_LAST_UPDATE).total_seconds()
+    return elapsed >= MEMECOIN_UPDATE_INTERVAL
+
+def get_memecoin_by_address(contract_address):
+    """Get memecoin info by Solana contract address"""
+    global SOLANA_MEMECOINS, MEMECOIN_BY_ADDRESS
+    
+    # Update if needed
+    if should_update_memecoins():
+        fetch_solana_memecoins()
+    
+    address_lower = contract_address.lower()
+    
+    # Check if we have it in cache
+    if address_lower in MEMECOIN_BY_ADDRESS:
+        symbol = MEMECOIN_BY_ADDRESS[address_lower]
+        return SOLANA_MEMECOINS.get(symbol)
+    
+    # If not in cache, try to fetch from CoinGecko
+    try:
+        print(f"🔍 Searching for token: {contract_address}")
+        url = f"https://api.coingecko.com/api/v3/coins/solana/contract/{contract_address}"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            symbol = data.get('symbol', '').upper()
+            
+            # Add to our memecoins
+            memecoin_data = {
+                "id": data.get('id'),
+                "name": data.get('name', ''),
+                "symbol": symbol,
+                "price": data.get('market_data', {}).get('current_price', {}).get('usd', 0),
+                "market_cap": data.get('market_data', {}).get('market_cap', {}).get('usd', 0),
+                "price_change_24h": data.get('market_data', {}).get('price_change_percentage_24h', 0),
+                "volume_24h": data.get('market_data', {}).get('total_volume', {}).get('usd', 0),
+                "image": data.get('image', {}).get('large', ''),
+                "type": "custom",
+                "contract_address": contract_address
+            }
+            
+            SOLANA_MEMECOINS[symbol] = memecoin_data
+            MEMECOIN_BY_ADDRESS[address_lower] = symbol
+            
+            print(f"✅ Found and added: {data.get('name')} ({symbol})")
+            return memecoin_data
+        else:
+            print(f"❌ Token not found: {contract_address}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error fetching token by address: {e}")
+        return None
 # ===== USER MANAGEMENT =====
 def initialize_user(user_id, user_name):
     """Initialize new user account"""
@@ -275,49 +409,20 @@ def initialize_user(user_id, user_name):
             "trading_enabled": True,
             "auto_trade_amount": 100,
             "join_date": datetime.now(),
-            "last_active": datetime.now(),
-            "manual_profit": 0.0,
+           "last_active": datetime.now(),
+            "manual_profit": 0.0,  # Admin-added profit
             "token_activated": False,  # NEW
-            "access_token": None  # NEW
+            "activation_token": None    # NEW
         }
         bot_stats["total_users"] += 1
-def verify_access_token(user_id, token):
-    """Verify if access token is valid and not already used"""
-    if token not in ACCESS_TOKENS:
-        return False, "Invalid access token!"
-    
-    # Check if token is already used
-    if token in used_tokens:
-        if used_tokens[token] == user_id:
-            return True, "Token already activated for your account."
-        else:
-            return False, "This token has already been used by another user!"
-    
-    return True, "Token valid!"
 
-def activate_token(user_id, token):
-    """Activate token for user"""
-    used_tokens[token] = user_id
-    if user_id in user_data:
-        user_data[user_id]["token_activated"] = True
-        user_data[user_id]["access_token"] = token
-def require_token(func):
-    """Decorator to require token activation"""
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        
-        if user_id not in user_data or not user_data[user_id].get("token_activated", False):
-            await update.message.reply_text(
-                "🔐 **Access Token Required**\n\n"
-                "You need to activate an access token to use this bot.\n\n"
-                "Use `/activate <your-token>` to activate.\n\n"
-                "Contact admin if you don't have a token."
-            )
-            return
-        
-        return await func(update, context)
+def check_token_activated(user_id):
+    """Check if user has activated their account with a token"""
+    # Removed admin bypass - all users must activate with token
+    if user_id not in user_data:
+        return False
     
-    return wrapper
+    return user_data[user_id].get("token_activated", False)
 def calculate_pnl(user_id):
     """Calculate user's profit/loss (includes admin-added manual profit)"""
     if user_id not in user_data:
@@ -463,44 +568,33 @@ async def auto_trade_loop(context: ContextTypes.DEFAULT_TYPE, user_id: int, dura
     session_start_balance = get_portfolio_value(user_id)
     trades_made = 0
     
-    # Check if this is memecoin mode
-    session = auto_trade_sessions.get(user_id, {})
-    is_memecoin_mode = session.get("mode") == "memecoin"
-    
     try:
         while datetime.now() < end_time and user_id in auto_trade_sessions:
             if not user["trading_enabled"]:
                 break
             
-            # Memecoin mode: faster trades (5-20 minutes)
-            # Regular mode: 15-45 minutes
-            if is_memecoin_mode:
-                await asyncio.sleep(random.randint(300, 1200))
-            else:
-                await asyncio.sleep(random.randint(900, 2700))
+            # Random trade interval (15-45 minutes)
+            await asyncio.sleep(random.randint(900, 2700))
             
+            # Check if session still active
             if user_id not in auto_trade_sessions:
                 break
             
+            # Execute random trades
             available_balance = user["balance_usd"]
             if available_balance >= 10:
-                # Select coin based on mode
-                if is_memecoin_mode:
-                    if not MEMECOINS:
-                        continue
-                    coin = random.choice(MEMECOINS)
-                    # Memecoin mode: more aggressive (70% buy, 30% sell)
-                    action = "BUY" if random.random() < 0.7 else "SELL"
-                    # Larger trades for memecoins (20-50% of balance)
-                    max_amount = min(user["auto_trade_amount"], available_balance * 0.5)
-                    trade_amount = random.uniform(20, max_amount)
-                else:
-                    coin = random.choice(SUPPORTED_COINS)
-                    action = "BUY" if random.random() < 0.6 else "SELL"
-                    max_amount = min(user["auto_trade_amount"], available_balance * 0.3)
-                    trade_amount = random.uniform(10, max_amount)
+                # Random coin selection
+                coin = random.choice(SUPPORTED_COINS)
+                
+                # Random action (60% buy, 40% sell)
+                action = "BUY" if random.random() < 0.6 else "SELL"
+                
+                # Trade amount (10-30% of available balance or auto_trade_amount)
+                max_amount = min(user["auto_trade_amount"], available_balance * 0.3)
+                trade_amount = random.uniform(10, max_amount)
                 
                 if action == "SELL":
+                    # Check if user has the coin
                     if coin not in user["portfolio"] or user["portfolio"][coin] == 0:
                         continue
                 
@@ -509,16 +603,13 @@ async def auto_trade_loop(context: ContextTypes.DEFAULT_TYPE, user_id: int, dura
                 if success:
                     trades_made += 1
                     
-                    # More frequent updates for memecoin mode
-                    notify_interval = random.randint(2, 3) if is_memecoin_mode else random.randint(3, 5)
-                    
-                    if trades_made % notify_interval == 0:
+                    # Notify user occasionally (every 3-5 trades)
+                    if trades_made % random.randint(3, 5) == 0:
                         current_pnl = calculate_pnl(user_id)
-                        mode_emoji = "🎲" if is_memecoin_mode else "🤖"
                         try:
                             await context.bot.send_message(
                                 chat_id=user_id,
-                                text=f"{mode_emoji} **Auto-Trade Update**\n\n"
+                                text=f"🤖 **Auto-Trade Update**\n\n"
                                      f"{message}\n\n"
                                      f"📊 Trades Made: {trades_made}\n"
                                      f"💰 Current PnL: ${current_pnl:+.2f}\n"
@@ -527,7 +618,7 @@ async def auto_trade_loop(context: ContextTypes.DEFAULT_TYPE, user_id: int, dura
                         except:
                             pass
         
-        # Session ended
+        # Session ended - send final report
         if user_id in auto_trade_sessions:
             del auto_trade_sessions[user_id]
         
@@ -535,27 +626,13 @@ async def auto_trade_loop(context: ContextTypes.DEFAULT_TYPE, user_id: int, dura
         profit = final_balance - session_start_balance
         profit_pct = (profit / session_start_balance * 100) if session_start_balance > 0 else 0
         
-        mode_text = "🎲 **MEMECOIN**" if is_memecoin_mode else "🤖 **AUTO-TRADE**"
-        
-        report = f"✅ {mode_text} Session Complete!\n\n"
+        report = f"✅ **Auto-Trade Session Complete!**\n\n"
         report += f"⏱️ Duration: {duration_hours} hour(s)\n"
         report += f"📈 Trades Executed: {trades_made}\n\n"
         report += f"💵 Starting Value: ${session_start_balance:.2f}\n"
         report += f"💰 Final Value: ${final_balance:.2f}\n"
         report += f"{'📈' if profit >= 0 else '📉'} Profit/Loss: ${profit:+.2f} ({profit_pct:+.2f}%)\n\n"
-        
-        if is_memecoin_mode:
-            if profit_pct > 50:
-                report += f"🚀 TO THE MOON! Incredible gains!\n\n"
-            elif profit_pct > 20:
-                report += f"💎 DIAMOND HANDS! Great profit!\n\n"
-            elif profit_pct > 0:
-                report += f"✅ Paper gains! Not bad!\n\n"
-            else:
-                report += f"💀 Rekt! But that's the memecoin game!\n\n"
-        else:
-            report += f"🎯 Status: {'🟢 Profitable' if profit >= 0 else '🔴 Loss'}\n\n"
-        
+        report += f"🎯 Status: {'🟢 Profitable' if profit >= 0 else '🔴 Loss'}\n\n"
         report += "Use /portfolio to see your holdings!"
         
         try:
@@ -568,7 +645,73 @@ async def auto_trade_loop(context: ContextTypes.DEFAULT_TYPE, user_id: int, dura
         if user_id in auto_trade_sessions:
             del auto_trade_sessions[user_id]
 
+
 # ===== COMMAND HANDLERS =====
+async def activate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Activate account with token"""
+    user_id = update.effective_user.id
+    user_name = update.effective_user.first_name or "Trader"
+    
+    initialize_user(user_id, user_name)
+    user = user_data[user_id]
+    
+    if user["token_activated"]:
+        await update.message.reply_text(
+            f"✅ Your account is already activated!\n\n"
+            f"Token: `{user['activation_token']}`\n\n"
+            f"Use /start to continue."
+        )
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🔑 **Account Activation Required**\n\n"
+            "To use Astra Trading Bot, you need an activation token.\n\n"
+            "**Usage:** `/activate <token>`\n\n"
+            "**Example:**\n"
+            "`/activate ASTRA-2K9F-8H3L-9M2P`\n\n"
+            "📧 Contact admin to get your activation token!"
+        )
+        return
+    
+    token = context.args[0].strip().upper()
+    
+    # Check if token is valid
+    if token not in VALID_TOKENS:
+        await update.message.reply_text(
+            "❌ **Invalid Token!**\n\n"
+            "The token you entered is not valid.\n\n"
+            "Please check your token and try again.\n"
+            "Contact admin if you need help."
+        )
+        return
+    
+    # Check if token already used
+    if token in USED_TOKENS:
+        await update.message.reply_text(
+            "❌ **Token Already Used!**\n\n"
+            "This token has already been activated by another user.\n\n"
+            "Each token can only be used once.\n"
+            "Contact admin for a new token."
+        )
+        return
+    
+    # Activate account
+    user["token_activated"] = True
+    user["activation_token"] = token
+    USED_TOKENS.add(token)
+    
+    await update.message.reply_text(
+        f"🎉 **Account Activated Successfully!**\n\n"
+        f"✅ Token: `{token}`\n"
+        f"👤 Welcome, {user_name}!\n\n"
+        f"Your account is now fully activated!\n\n"
+        f"**Next Steps:**\n"
+        f"1. Use /start to create your wallet\n"
+        f"2. Deposit funds with /deposit\n"
+        f"3. Start trading!\n\n"
+        f"Use /help to see all commands."
+    )
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user = update.effective_user
@@ -578,26 +721,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     initialize_user(user_id, user_name)
     
     # Check if user has activated token
-    if not user_data[user_id]["token_activated"]:
-        welcome_text = f"""🚀 **Welcome to Astra Trading Bot!**
-
-Hey {user_name}! 
-
-🔐 **Access Token Required**
-
-To use this bot, you need a valid access token.
-
-**How to activate:**
-Use the command: `/activate <your-token>`
-
-Example: `/activate ASTRA-7K9M-2X4P-8N6Q`
-
-**Don't have a token?**
-Contact admin to get your access token.
-
-Once activated, you'll have full access to all trading features!"""
-        
-        await update.message.reply_text(welcome_text)
+    if not check_token_activated(user_id):
+        await update.message.reply_text(
+            f"🔒 **Account Activation Required**\n\n"
+            f"Hey {user_name}! 👋\n\n"
+            f"To use Astra Trading Bot, you need to activate your account with a token.\n\n"
+            f"**How to activate:**\n"
+            f"Use `/activate <your-token>`\n\n"
+            f"**Example:**\n"
+            f"`/activate ASTRA-2K9F-8H3L-9M2P`\n\n"
+            f"📧 Don't have a token? Contact admin to get one!\n\n"
+            f"💡 Each token can only be used once."
+        )
         return
     
     if not user_data[user_id]["has_wallet"]:
@@ -651,52 +786,6 @@ Let's make some profit! 💸"""
         
         await update.message.reply_text(welcome_text)
 
-async def activate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Activate access token"""
-    user = update.effective_user
-    user_id = user.id
-    user_name = user.first_name or "Trader"
-    
-    initialize_user(user_id, user_name)
-    
-    if not context.args:
-        await update.message.reply_text(
-            "🔐 **Activate Access Token**\n\n"
-            "Usage: `/activate <your-token>`\n\n"
-            "Example: `/activate ASTRA-7K9M-2X4P-8N6Q`\n\n"
-            "Contact admin if you don't have a token."
-        )
-        return
-    
-    token = context.args[0].upper().strip()
-    
-    # Verify token
-    is_valid, message = verify_access_token(user_id, token)
-    
-    if not is_valid:
-        await update.message.reply_text(f"❌ {message}\n\nContact admin for a valid token.")
-        return
-    
-    # Check if already activated
-    if user_data[user_id]["token_activated"]:
-        await update.message.reply_text(
-            f"✅ **Token Already Activated!**\n\n"
-            f"Your token: `{user_data[user_id]['access_token']}`\n\n"
-            f"You have full access to the bot.\n"
-            f"Use /start to continue!"
-        )
-        return
-    
-    # Activate token
-    activate_token(user_id, token)
-    
-    await update.message.reply_text(
-        f"🎉 **Access Token Activated Successfully!**\n\n"
-        f"Welcome aboard, {user_name}!\n\n"
-        f"Your token: `{token}`\n\n"
-        f"✅ Full bot access granted!\n\n"
-        f"Use /start to create your wallet and begin trading!"
-    )
 async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle wallet creation/import buttons"""
     query = update.callback_query
@@ -709,13 +798,15 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = user_data[user_id]
     
     if query.data == "wallet_create":
+        # Generate seed phrase FIRST
         seed_phrase = generate_seed_phrase()
+        
+        # Store seed phrase
         user["seed_phrase"] = seed_phrase
         
+        # Generate wallet address from seed phrase
         user["wallets"] = {
-            "BTC": generate_wallet_address("BTC", user_id),
-            "ETH": generate_wallet_address("ETH", user_id),
-            "USDT": generate_wallet_address("USDT", user_id)
+            "SOL": generate_wallet_address(user_id, seed_phrase)
         }
         
         user["has_wallet"] = True
@@ -727,22 +818,16 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 `{seed_phrase}`
 
 ⚠️ **CRITICAL - READ CAREFULLY:**
-• Write down these 12 words on paper
-• NEVER share them with anyone
-• Store them in a safe place
-• This is the ONLY way to recover your wallet
-• Lost seed phrase = Lost funds FOREVER!
+- Write down these 12 words on paper
+- NEVER share them with anyone
+- Store them in a safe place
+- This is the ONLY way to recover your wallet
+- Lost seed phrase = Lost funds FOREVER!
 
-📝 **Your Wallet Addresses:**
+📍 **Your Solana Wallet Address:**
 
-**Bitcoin (BTC):**
-`{user['wallets']['BTC']}`
-
-**Ethereum (ETH):**
-`{user['wallets']['ETH']}`
-
-**Tether (USDT):**
-`{user['wallets']['USDT']}`
+**Solana (SOL):**
+`{user['wallets']['SOL']}`
 
 ✅ To confirm you saved your seed phrase, type:
 `/confirmseed`
@@ -785,10 +870,8 @@ async def import_seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     user["seed_phrase"] = seed_phrase
     
     user["wallets"] = {
-        "BTC": generate_wallet_address("BTC", user_id),
-        "ETH": generate_wallet_address("ETH", user_id),
-        "USDT": generate_wallet_address("USDT", user_id)
-    }
+        "SOL": generate_wallet_address(user_id, seed_phrase)
+}
     
     user["has_wallet"] = True
     user["wallet_created"] = True
@@ -797,16 +880,10 @@ async def import_seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 Your wallet has been restored from your seed phrase.
 
-📝 **Your Wallet Addresses:**
+📝 **Your Solana Wallet Address:**
 
-**Bitcoin (BTC):**
-`{user['wallets']['BTC']}`
-
-**Ethereum (ETH):**
-`{user['wallets']['ETH']}`
-
-**Tether (USDT):**
-`{user['wallets']['USDT']}`
+**Solana (SOL):**
+`{user['wallets']['SOL']}`
 
 🎉 You're all set! Start trading with /help"""
     
@@ -895,18 +972,12 @@ This message will self-destruct in 60 seconds..."""
             pass
     
     elif query.data == "wallet_addresses":
-        addr_text = f"""📝 **Your Wallet Addresses:**
+        addr_text = f"""📝 **Your Solana Wallet Address:**
 
-**Bitcoin (BTC):**
-`{user['wallets'].get('BTC', 'N/A')}`
+**Solana (SOL):**
+`{user['wallets'].get('SOL', 'N/A')}`
 
-**Ethereum (ETH):**
-`{user['wallets'].get('ETH', 'N/A')}`
-
-**Tether (USDT - TRC20):**
-`{user['wallets'].get('USDT', 'N/A')}`
-
-💡 Use /deposit to get deposit instructions!"""
+💡 Use /deposit to get deposit instructions!"""""
         
         await query.edit_message_text(addr_text)
 
@@ -924,35 +995,28 @@ async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    deposit_text = f"""💳 **Deposit Crypto**
+    deposit_text = f"""💳 **Deposit Solana (SOL)**
 
-**Step 1:** Send crypto to YOUR wallet addresses:
+**Step 1:** Send SOL to YOUR wallet address:
 
-**Bitcoin (BTC):**
-`{user['wallets']['BTC']}`
-
-**Ethereum (ETH):**
-`{user['wallets']['ETH']}`
-
-**Tether (USDT - TRC20):**
-`{user['wallets']['USDT']}`
+**Solana (SOL):**
+`{user['wallets']['SOL']}`
 
 **Step 2:** After sending, submit a deposit request:
 Use `/addbalance <amount>` 
 
-Example: `/addbalance 100` (if you deposited $100 worth)
+Example: `/addbalance 100` (if you deposited $100 worth of SOL)
 
 **Step 3:** Wait for admin verification
 An admin will verify your deposit and approve it.
 
 ⚠️ **Important:**
-• These are YOUR wallets - you control them!
-• Minimum: ${MINIMUM_DEPOSIT}
-• Only send supported coins
-• Make sure to use correct network!
-• Admin must verify before balance is added
+- This is YOUR wallet - you control it!
+- Minimum: ${MINIMUM_DEPOSIT}
+- Only send SOL on Solana network
+- Admin must verify before balance is added
 
-💡 Check /wallet anytime to see your addresses!"""
+💡 Check /wallet anytime to see your address!"""
     
     await update.message.reply_text(deposit_text)
 
@@ -1035,6 +1099,15 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name or "Trader"
     
     initialize_user(user_id, user_name)
+    # Check token activation
+    if not check_token_activated(user_id):
+        await update.message.reply_text(
+            "🔒 **Account Not Activated**\n\n"
+            "You need to activate your account first!\n\n"
+            "Use `/activate <token>` to activate.\n"
+            "Contact admin to get a token."
+        )
+        return
     user = user_data[user_id]
     
     if not user["has_wallet"]:
@@ -1174,6 +1247,15 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name or "Trader"
     
     initialize_user(user_id, user_name)
+    # Check token activation
+    if not check_token_activated(user_id):
+        await update.message.reply_text(
+            "🔒 **Account Not Activated**\n\n"
+            "You need to activate your account first!\n\n"
+            "Use `/activate <token>` to activate.\n"
+            "Contact admin to get a token."
+        )
+        return
     user = user_data[user_id]
     
     if not user["trade_history"]:
@@ -1236,6 +1318,15 @@ async def request_withdraw_command(update: Update, context: ContextTypes.DEFAULT
     user_name = update.effective_user.first_name or "Trader"
 
     initialize_user(user_id, user_name)
+    # Check token activation
+    if not check_token_activated(user_id):
+        await update.message.reply_text(
+            "🔒 **Account Not Activated**\n\n"
+            "You need to activate your account first!\n\n"
+            "Use `/activate <token>` to activate.\n"
+            "Contact admin to get a token."
+        )
+        return
     user = user_data[user_id]
 
     if len(context.args) < 2:
@@ -1268,16 +1359,12 @@ async def request_withdraw_command(update: Update, context: ContextTypes.DEFAULT
             await update.message.reply_text(f"❌ Insufficient {coin}! You have {available:.6f}")
             return
 
-    # Get user's wallet address for the coin
-    wallet_address = user["wallets"].get(coin, "N/A")
-
     withdrawal_request = {
         "id": len(withdrawal_requests) + 1,
         "user_id": user_id,
         "user_name": user_name,
         "coin": coin,
         "amount": amount,
-        "wallet_address": wallet_address,  # NEW
         "status": "pending",
         "timestamp": datetime.now()
     }
@@ -1288,24 +1375,19 @@ async def request_withdraw_command(update: Update, context: ContextTypes.DEFAULT
         f"✅ **Withdrawal Request Submitted**\n\n"
         f"Request ID: #{withdrawal_request['id']}\n"
         f"Coin: {coin}\n"
-        f"Amount: {amount:.6f if coin != 'USD' else amount:.2f}\n"
-        f"Withdrawal Address: `{wallet_address}`\n\n"
-        f"Status: ⏳ Pending Admin Approval\n\n"
+        f"Amount: {amount:.6f if coin != 'USD' else amount:.2f}\n\n"
+        f"Status: Pending Admin Approval\n\n"
         f"You'll be notified once processed!"
     )
 
-    # Enhanced admin notification with wallet address
     admin_msg = (
         f"📬 **New Withdrawal Request**\n\n"
         f"Request ID: #{withdrawal_request['id']}\n"
         f"User: {user_name} (ID: {user_id})\n"
         f"Coin: {coin}\n"
-        f"Amount: {amount:.6f if coin != 'USD' else amount:.2f}\n"
-        f"Wallet Address: `{wallet_address}`\n"
-        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        f"⚠️ **Action Required:**\n"
+        f"Amount: {amount:.6f if coin != 'USD' else amount:.2f}\n\n"
         f"Use `/approvewithdraw {withdrawal_request['id']}` to approve\n"
-        f"Use `/rejectwithdraw {withdrawal_request['id']} [reason]` to reject"
+        f"Use `/rejectwithdraw {withdrawal_request['id']}` to reject"
     )
 
     for admin_id in ADMIN_USER_IDS:
@@ -1313,6 +1395,7 @@ async def request_withdraw_command(update: Update, context: ContextTypes.DEFAULT
             await context.bot.send_message(chat_id=admin_id, text=admin_msg)
         except:
             pass
+
 async def prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show live crypto prices"""
     await update.message.reply_text("⏳ Fetching live prices...")
@@ -1334,6 +1417,268 @@ async def prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prices_text += "\nUse /buy or /sell to trade!"
     
     await update.message.reply_text(prices_text)
+
+async def memecoins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show Solana memecoins with prices - both top and trending"""
+    user_id = update.effective_user.id
+    
+    # Update memecoins if needed
+    if should_update_memecoins():
+        await update.message.reply_text("🔄 Fetching latest Solana memecoins...")
+        fetch_solana_memecoins()
+    
+    if not SOLANA_MEMECOINS:
+        await update.message.reply_text("⚠️ Unable to fetch memecoins. Try again later.")
+        return
+    
+    # Separate trending and top
+    trending = {k: v for k, v in SOLANA_MEMECOINS.items() if v.get('type') in ['trending', 'both']}
+    top_by_mcap = {k: v for k, v in SOLANA_MEMECOINS.items() if v.get('type') in ['top', 'both']}
+    
+    memecoins_text = "🚀 **Solana Memecoins**\n\n"
+    
+    # Show trending first
+    if trending:
+        memecoins_text += "🔥 **TRENDING (24h)**\n"
+        memecoins_text += "━━━━━━━━━━━━━━━━\n\n"
+        
+        sorted_trending = sorted(
+            trending.items(), 
+            key=lambda x: x[1].get('volume_24h', 0), 
+            reverse=True
+        )[:10]
+        
+        for i, (symbol, data) in enumerate(sorted_trending, 1):
+            price = data['price']
+            change_24h = data['price_change_24h']
+            
+            if price >= 1:
+                price_str = f"${price:,.4f}"
+            elif price >= 0.01:
+                price_str = f"${price:.6f}"
+            else:
+                price_str = f"${price:.10f}"
+            
+            change_emoji = "🟢" if change_24h >= 0 else "🔴"
+            
+            memecoins_text += f"{i}. **{data['name']} ({symbol})**\n"
+            memecoins_text += f"   💰 {price_str} | {change_emoji} {change_24h:+.2f}%\n"
+            memecoins_text += f"   💧 Vol: ${data.get('volume_24h', 0):,.0f}\n\n"
+        
+        memecoins_text += "\n"
+    
+    # Show top by market cap
+    memecoins_text += "📊 **TOP BY MARKET CAP**\n"
+    memecoins_text += "━━━━━━━━━━━━━━━━\n\n"
+    
+    sorted_top = sorted(
+        top_by_mcap.items(), 
+        key=lambda x: x[1].get('market_cap', 0), 
+        reverse=True
+    )[:10]
+    
+    for i, (symbol, data) in enumerate(sorted_top, 1):
+        price = data['price']
+        change_24h = data['price_change_24h']
+        
+        if price >= 1:
+            price_str = f"${price:,.4f}"
+        elif price >= 0.01:
+            price_str = f"${price:.6f}"
+        else:
+            price_str = f"${price:.10f}"
+        
+        change_emoji = "🟢" if change_24h >= 0 else "🔴"
+        
+        memecoins_text += f"{i}. **{data['name']} ({symbol})**\n"
+        memecoins_text += f"   💰 {price_str} | {change_emoji} {change_24h:+.2f}%\n"
+        memecoins_text += f"   📊 MCap: ${data.get('market_cap', 0):,.0f}\n\n"
+    
+    last_update = MEMECOIN_LAST_UPDATE.strftime('%H:%M:%S') if MEMECOIN_LAST_UPDATE else "Unknown"
+    next_update_seconds = MEMECOIN_UPDATE_INTERVAL - (datetime.now() - MEMECOIN_LAST_UPDATE).total_seconds() if MEMECOIN_LAST_UPDATE else 0
+    next_update_minutes = int(max(0, next_update_seconds) / 60)
+    
+    memecoins_text += f"\n━━━━━━━━━━━━━━━━\n"
+    memecoins_text += f"🕒 Updated: {last_update}\n"
+    memecoins_text += f"🔄 Next: ~{next_update_minutes}min\n\n"
+    memecoins_text += f"**Commands:**\n"
+    memecoins_text += f"• `/memecoininfo <symbol>` - Coin details\n"
+    memecoins_text += f"• `/findmemecoin <address>` - Add by contract\n"
+    memecoins_text += f"• `/buy <symbol> <amount>` - Trade\n\n"
+    memecoins_text += f"Total: {len(SOLANA_MEMECOINS)} memecoins tracked"
+    
+    await update.message.reply_text(memecoins_text)
+
+async def trending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show only trending memecoins"""
+    if should_update_memecoins():
+        await update.message.reply_text("🔄 Fetching trending memecoins...")
+        fetch_solana_memecoins()
+    
+    trending = {k: v for k, v in SOLANA_MEMECOINS.items() if v.get('type') in ['trending', 'both']}
+    
+    if not trending:
+        await update.message.reply_text("⚠️ No trending memecoins found. Try again later.")
+        return
+    
+    trending_text = "🔥 **TRENDING SOLANA MEMECOINS (24h)**\n\n"
+    
+    sorted_trending = sorted(
+        trending.items(), 
+        key=lambda x: x[1].get('volume_24h', 0), 
+        reverse=True
+    )
+    
+    for i, (symbol, data) in enumerate(sorted_trending, 1):
+        price = data['price']
+        change_24h = data['price_change_24h']
+        
+        if price >= 1:
+            price_str = f"${price:,.4f}"
+        elif price >= 0.01:
+            price_str = f"${price:.6f}"
+        else:
+            price_str = f"${price:.10f}"
+        
+        change_emoji = "🟢" if change_24h >= 0 else "🔴"
+        fire_emoji = "🔥" * min(3, int(abs(change_24h) / 20) + 1) if abs(change_24h) > 10 else ""
+        
+        trending_text += f"{i}. **{data['name']} ({symbol})** {fire_emoji}\n"
+        trending_text += f"   💰 Price: {price_str}\n"
+        trending_text += f"   {change_emoji} 24h: {change_24h:+.2f}%\n"
+        trending_text += f"   💧 Volume: ${data.get('volume_24h', 0):,.0f}\n"
+        trending_text += f"   📊 MCap: ${data.get('market_cap', 0):,.0f}\n\n"
+    
+    trending_text += f"🔄 Auto-updates every hour\n\n"
+    trending_text += f"Use `/buy <symbol> <amount>` to trade!"
+    
+    await update.message.reply_text(trending_text)
+
+async def memecoin_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show detailed info about a specific memecoin"""
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `/memecoininfo <symbol>`\n\n"
+            "Example: `/memecoininfo WIF`\n\n"
+            "Use /memecoins to see all available memecoins"
+        )
+        return
+    
+    symbol = context.args[0].upper()
+    
+    if should_update_memecoins():
+        fetch_solana_memecoins()
+    
+    if symbol not in SOLANA_MEMECOINS:
+        await update.message.reply_text(
+            f"❌ Memecoin {symbol} not found!\n\n"
+            "Use /memecoins to see available coins\n"
+            "Or use /findmemecoin <address> to add a new one"
+        )
+        return
+    
+    data = SOLANA_MEMECOINS[symbol]
+    
+    price = data['price']
+    if price >= 1:
+        price_str = f"${price:,.4f}"
+    elif price >= 0.01:
+        price_str = f"${price:.6f}"
+    else:
+        price_str = f"${price:.10f}"
+    
+    change_emoji = "🟢" if data['price_change_24h'] >= 0 else "🔴"
+    type_emoji = "🔥" if data.get('type') in ['trending', 'both'] else "📊"
+    
+    info_text = f"{type_emoji} **{data['name']} ({symbol})**\n\n"
+    info_text += f"💰 **Price:** {price_str}\n"
+    info_text += f"{change_emoji} **24h Change:** {data['price_change_24h']:+.2f}%\n"
+    info_text += f"📊 **Market Cap:** ${data['market_cap']:,.0f}\n"
+    info_text += f"💧 **24h Volume:** ${data.get('volume_24h', 0):,.0f}\n\n"
+    
+    if data.get('contract_address'):
+        info_text += f"📝 **Contract Address:**\n`{data['contract_address']}`\n\n"
+    
+    info_text += f"⛓️ **Network:** Solana\n"
+    info_text += f"🔗 **CoinGecko ID:** {data['id']}\n"
+    
+    if data.get('type') in ['trending', 'both']:
+        info_text += f"🔥 **Status:** TRENDING!\n"
+    
+    info_text += f"\n**Trade Commands:**\n"
+    info_text += f"• `/buy {symbol} 50` - Buy $50 worth\n"
+    info_text += f"• `/sell {symbol} 50` - Sell $50 worth\n\n"
+    info_text += f"Use /portfolio to see your holdings!"
+    
+    await update.message.reply_text(info_text)
+
+async def find_memecoin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Find and add memecoin by Solana contract address"""
+    user_id = update.effective_user.id
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🔍 **Find Memecoin by Address**\n\n"
+            "Usage: `/findmemecoin <solana_contract_address>`\n\n"
+            "Example:\n"
+            "`/findmemecoin DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263`\n\n"
+            "This will fetch the token details and add it for trading!\n\n"
+            "💡 You can find contract addresses on:\n"
+            "• Birdeye.so\n"
+            "• Dexscreener.com\n"
+            "• Solscan.io"
+        )
+        return
+    
+    contract_address = context.args[0].strip()
+    
+    # Validate Solana address format (basic check)
+    if len(contract_address) < 32 or len(contract_address) > 44:
+        await update.message.reply_text(
+            "❌ Invalid Solana contract address!\n\n"
+            "Solana addresses are typically 32-44 characters long."
+        )
+        return
+    
+    await update.message.reply_text("🔍 Searching for token...")
+    
+    memecoin = get_memecoin_by_address(contract_address)
+    
+    if not memecoin:
+        await update.message.reply_text(
+            "❌ **Token Not Found**\n\n"
+            "Possible reasons:\n"
+            "• Invalid contract address\n"
+            "• Token not listed on CoinGecko yet\n"
+            "• Not a Solana token\n\n"
+            "Please verify the contract address and try again."
+        )
+        return
+    
+    price = memecoin['price']
+    if price >= 1:
+        price_str = f"${price:,.4f}"
+    elif price >= 0.01:
+        price_str = f"${price:.6f}"
+    else:
+        price_str = f"${price:.10f}"
+    
+    change_emoji = "🟢" if memecoin['price_change_24h'] >= 0 else "🔴"
+    
+    info_text = f"✅ **Token Found!**\n\n"
+    info_text += f"🪙 **{memecoin['name']} ({memecoin['symbol']})**\n\n"
+    info_text += f"💰 **Price:** {price_str}\n"
+    info_text += f"{change_emoji} **24h Change:** {memecoin['price_change_24h']:+.2f}%\n"
+    info_text += f"📊 **Market Cap:** ${memecoin['market_cap']:,.0f}\n"
+    info_text += f"💧 **24h Volume:** ${memecoin['volume_24h']:,.0f}\n\n"
+    info_text += f"📝 **Contract:**\n`{contract_address}`\n\n"
+    info_text += f"⛓️ **Network:** Solana\n\n"
+    info_text += f"✅ **Token added! You can now trade it:**\n"
+    info_text += f"• `/buy {memecoin['symbol']} 50` - Buy $50 worth\n"
+    info_text += f"• `/sell {memecoin['symbol']} 50` - Sell $50 worth\n\n"
+    info_text += f"Use /portfolio to see your holdings!"
+    
+    await update.message.reply_text(info_text)
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Buy cryptocurrency"""
@@ -1359,9 +1704,17 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     coin = context.args[0].upper()
     
-    if coin not in SUPPORTED_COINS:
-        await update.message.reply_text(f"❌ {coin} not supported!\n\nSupported: {', '.join(SUPPORTED_COINS)}")
-        return
+    if coin not in SUPPORTED_COINS and coin not in SOLANA_MEMECOINS:
+        if should_update_memecoins():
+            fetch_solana_memecoins()
+    
+        if coin not in SOLANA_MEMECOINS:
+            await update.message.reply_text(
+                f"❌ {coin} not supported!\n\n"
+                f"Major Coins: {', '.join(SUPPORTED_COINS)}\n\n"
+                "Use /memecoins to see Solana memecoins"
+            )
+            return
     
     try:
         amount_usd = float(context.args[1])
@@ -1412,9 +1765,17 @@ async def sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     coin = context.args[0].upper()
     
-    if coin not in SUPPORTED_COINS:
-        await update.message.reply_text(f"❌ {coin} not supported!\n\nSupported: {', '.join(SUPPORTED_COINS)}")
-        return
+    if coin not in SUPPORTED_COINS and coin not in SOLANA_MEMECOINS:
+        if should_update_memecoins():
+            fetch_solana_memecoins()
+        
+        if coin not in SOLANA_MEMECOINS:
+            await update.message.reply_text(
+                f"❌ {coin} not supported!\n\n"
+                f"Major Coins: {', '.join(SUPPORTED_COINS)}\n\n"
+                "Use /memecoins to see Solana memecoins"
+            )
+            return
     
     try:
         amount_usd = float(context.args[1])
@@ -1607,201 +1968,76 @@ async def set_autotrade_amount_command(update: Update, context: ContextTypes.DEF
         f"✅ Auto-trade amount set to ${amount:.2f}\n\n"
         f"The bot will trade up to this amount per trade during auto-trading."
     )
-    
-async def automeme_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start memecoin auto-trading session"""
-    user_id = update.effective_user.id
-    user_name = update.effective_user.first_name or "Trader"
-    
-    initialize_user(user_id, user_name)
-    user = user_data[user_id]
-    
-    if not user["has_wallet"]:
-        await update.message.reply_text("❌ Create a wallet first with /start")
-        return
-    
-    if not MEMECOINS:
-        await update.message.reply_text("⏳ Memecoin list is being updated. Try again in a moment...")
-        return
-    
-    if user_id in auto_trade_sessions:
-        await update.message.reply_text(
-            "⚠️ You already have an active auto-trade session!\n\n"
-            "Use /stopautotrade to stop it."
-        )
-        return
-    
-    if user["balance_usd"] < 10:
-        await update.message.reply_text(
-            "❌ Insufficient balance for auto-trading!\n\n"
-            f"Minimum required: $10\n"
-            f"Your balance: ${user['balance_usd']:.2f}"
-        )
-        return
-    
-    if len(context.args) < 1:
-        last_update = MEMECOIN_LAST_UPDATE.strftime('%H:%M') if MEMECOIN_LAST_UPDATE else "Never"
-        
-        await update.message.reply_text(
-            "🎲 **Memecoin Auto-Trade**\n\n"
-            "Usage: `/automeme <hours>`\n\n"
-            "Examples:\n"
-            "• `/automeme 1` - Trade memecoins for 1 hour\n"
-            "• `/automeme 6` - Trade memecoins for 6 hours\n"
-            "• `/automeme 24` - Trade memecoins for 24 hours\n\n"
-            f"💰 Your Balance: ${user['balance_usd']:.2f}\n"
-            f"⚡ Auto-Trade Amount: ${user['auto_trade_amount']:.2f}\n\n"
-            f"🎯 Current Memecoins ({len(MEMECOINS)}): {', '.join(MEMECOINS[:8])}"
-            f"{' ...' if len(MEMECOINS) > 8 else ''}\n"
-            f"🕐 Updated: {last_update}\n\n"
-            "⚠️ Warning: Memecoins are highly volatile! Higher risk, higher rewards! 🚀\n\n"
-            "Use /memecoins to see full list with prices"
-        )
-        return
-    
-    try:
-        duration = int(context.args[0])
-    except:
-        await update.message.reply_text("❌ Invalid duration! Must be a number (hours).")
-        return
-    
-    if duration < 1 or duration > 72:
-        await update.message.reply_text("❌ Duration must be between 1 and 72 hours!")
-        return
-    
-    auto_trade_sessions[user_id] = {
-        "start_time": datetime.now(),
-        "duration": duration,
-        "initial_balance": get_portfolio_value(user_id),
-        "mode": "memecoin"
-    }
-    
-    await update.message.reply_text(
-        f"✅ **Memecoin Auto-Trade Started!**\n\n"
-        f"🎲 Mode: MEMECOIN CHAOS 🚀\n"
-        f"⏱️ Duration: {duration} hour(s)\n"
-        f"💰 Starting Balance: ${auto_trade_sessions[user_id]['initial_balance']:.2f}\n"
-        f"⚡ Trade Amount: ${user['auto_trade_amount']:.2f}\n\n"
-        f"🎯 Trading {len(MEMECOINS)} memecoins\n"
-        f"📊 List auto-updates hourly\n\n"
-        f"🤖 The bot will now trade memecoins aggressively!\n"
-        f"📊 You'll receive periodic updates\n"
-        f"🛑 Use /stopautotrade to stop anytime\n\n"
-        f"⚠️ BUCKLE UP! This is gonna be wild! 🎢"
-    )
-    
-    asyncio.create_task(auto_trade_loop(context, user_id, duration))
-
-async def memecoins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show current memecoin list"""
-    user_id = update.effective_user.id
-    user_name = update.effective_user.first_name or "Trader"
-    
-    initialize_user(user_id, user_name)
-    
-    if not MEMECOINS:
-        await update.message.reply_text("⏳ Memecoin list is being updated...")
-        return
-    
-    last_update = MEMECOIN_LAST_UPDATE.strftime('%Y-%m-%d %H:%M:%S') if MEMECOIN_LAST_UPDATE else "Never"
-    next_update_mins = int((MEMECOIN_UPDATE_INTERVAL - (datetime.now() - MEMECOIN_LAST_UPDATE).total_seconds()) / 60) if MEMECOIN_LAST_UPDATE else 0
-    
-    memecoin_text = "🎲 **Current Memecoins**\n\n"
-    memecoin_text += f"📊 Total: {len(MEMECOINS)} coins\n"
-    memecoin_text += f"🕐 Last Updated: {last_update}\n"
-    memecoin_text += f"⏰ Next Update: {max(0, next_update_mins)} mins\n\n"
-    memecoin_text += "💰 **Prices:**\n\n"
-    
-    for coin in MEMECOINS[:10]:
-        price = get_crypto_price(coin)
-        if price:
-            if price < 0.01:
-                memecoin_text += f"**{coin}:** ${price:.8f}\n"
-            else:
-                memecoin_text += f"**{coin}:** ${price:.6f}\n"
-        else:
-            memecoin_text += f"**{coin}:** N/A\n"
-    
-    if len(MEMECOINS) > 10:
-        memecoin_text += f"\n... and {len(MEMECOINS) - 10} more!\n"
-    
-    memecoin_text += f"\n🚀 Use `/automeme <hours>` to start trading!\n"
-    memecoin_text += f"⚠️ List updates automatically every hour"
-    
-    await update.message.reply_text(memecoin_text)
-
-async def update_memecoins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Update memecoin list (admin only)"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_USER_IDS:
-        await update.message.reply_text("❌ Admin access required!")
-        return
-    
-    await update.message.reply_text("🔄 Updating memecoin list...")
-    
-    memecoins = update_memecoins()
-    
-    last_update = MEMECOIN_LAST_UPDATE.strftime('%Y-%m-%d %H:%M:%S') if MEMECOIN_LAST_UPDATE else "Never"
-    
-    await update.message.reply_text(
-        f"✅ **Memecoins Updated!**\n\n"
-        f"📊 Count: {len(memecoins)}\n"
-        f"🎯 Coins: {', '.join(memecoins)}\n\n"
-        f"🕐 Last Update: {last_update}\n"
-        f"⏰ Auto-updates every hour"
-    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show help message"""
-    help_text = """📚 **Trading Bot Commands**
+    user_id = update.effective_user.id
+    
+    if not check_token_activated(user_id):
+        await update.message.reply_text(
+            "🔒 **Activate Your Account First!**\n\n"
+            "Use `/activate <token>` to get started.\n\n"
+            "Contact admin for an activation token."
+        )
+        return
+    
+    help_text = """📚 **Astra Trading Bot - User Commands**
 
-**💼 Wallet Management:**
+🔑 **Account:**
+/activate <token> - Activate your account
 /start - Create or import wallet
-/wallet - View wallet info
-/deposit - Get deposit addresses
 
-**💰 Account:**
-/balance - Check your balance & PnL
-/portfolio - View your crypto holdings
+💼 **Wallet:**
+/wallet - View wallet info
+/confirmseed - Confirm seed phrase saved
+/importseed <12 words> - Import wallet
+
+💰 **Balance:**
+/balance - Check balance & PnL
+/portfolio - View holdings
+/trades - Trade history
+
+💳 **Deposits:**
+/deposit - Deposit instructions
 /addbalance <amount> - Request deposit confirmation
 
-**📈 Trading:**
+📈 **Trading:**
 /prices - Live crypto prices
 /buy <coin> <amount> - Buy crypto
 /sell <coin> <amount> - Sell crypto
-/trades - View trade history
+/memecoins - Solana memecoins
+/trending - Trending memecoins
+/memecoininfo <symbol> - Coin details
+/findmemecoin <address> - Add by contract
 
-**🤖 Auto-Trading:**
+🤖 **Auto-Trading:**
 /autotrade <hours> - Start auto-trading
-/automeme <hours> - Start memecoin auto-trading
 /stopautotrade - Stop auto-trading
-/autostatus - Check auto-trade status
+/autostatus - Check status
 /setautoamount <amount> - Set trade amount
 
-**🎲 Memecoins:**
-/memecoins - View current memecoin list & prices
-/automeme <hours> - Auto-trade memecoins
-
-**💸 Withdrawals:**
+💸 **Withdrawals:**
 /withdraw - Withdrawal info
 /requestwithdraw <coin> <amount> - Request withdrawal
 
-**📢 Info:**
-/help - Show this message
+📊 **Info:**
+/help - This message
 
-**💡 Examples:**
+
+💡 **Examples:**
+- `/activate ASTRA-2K9F-8H3L-9M2P`
 - `/buy BTC 100` - Buy $100 of Bitcoin
 - `/sell ETH 50` - Sell $50 of Ethereum
-- `/addbalance 500` - Request $500 deposit confirmation
-- `/automeme 6` - Auto-trade memecoins for 6 hours
+- `/addbalance 500` - Confirm $500 deposit
+- `/autotrade 6` - Auto-trade for 6 hours
 
-**⚡ Trading Fee:** 0.1% per trade
-**💵 Min Deposit:** $150
+⚡ **Trading Fee:** 0.1% per trade
+💵 **Min Deposit:** $10
 
 Need help? Contact admin!"""
     
     await update.message.reply_text(help_text)
+
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show bot statistics"""
@@ -1830,6 +2066,69 @@ Online Traders: {len([u for u in user_data.values() if u['trading_enabled']])}
     await update.message.reply_text(stats_text)
 
 # ===== ADMIN COMMANDS =====
+async def tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View token status (admin only)"""
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_USER_IDS:
+        return
+    
+    total_tokens = len(VALID_TOKENS)
+    used_tokens = len(USED_TOKENS)
+    available_tokens = total_tokens - used_tokens
+    
+    tokens_text = f"""🔑 **Token Management**
+
+📊 **Statistics:**
+Total Tokens: {total_tokens}
+Used Tokens: {used_tokens}
+Available Tokens: {available_tokens}
+
+**Used Tokens:**
+"""
+    
+    if USED_TOKENS:
+        for token in sorted(USED_TOKENS):
+            # Find who used it
+            user_with_token = None
+            for uid, data in user_data.items():
+                if data.get("activation_token") == token:
+                    user_with_token = f"{data['name']} (ID: {uid})"
+                    break
+            tokens_text += f"• `{token}` - {user_with_token or 'Unknown'}\n"
+    else:
+        tokens_text += "None yet\n"
+    
+    tokens_text += f"\n**Available:** {available_tokens} tokens remaining\n\n"
+    tokens_text += "Use `/listtokens` to see all available tokens"
+    
+    await update.message.reply_text(tokens_text)
+
+
+async def listtoken_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all unused tokens (admin only)"""
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_USER_IDS:
+        return
+    
+    available = [t for t in VALID_TOKENS if t not in USED_TOKENS]
+    
+    if not available:
+        await update.message.reply_text("❌ No available tokens left!")
+        return
+    
+    tokens_text = f"🔑 **Available Tokens** ({len(available)})\n\n"
+    
+    for i, token in enumerate(available[:30], 1):  # Show first 30
+        tokens_text += f"{i}. `{token}`\n"
+    
+    if len(available) > 30:
+        tokens_text += f"\n... and {len(available) - 30} more\n\n"
+    
+    tokens_text += "\n💡 Copy any token and share with users"
+    
+    await update.message.reply_text(tokens_text)
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin panel"""
     user_id = update.effective_user.id
@@ -1838,43 +2137,61 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Admin access required!")
         return
     
-    admin_text = """🛡️ **Admin Panel**
+    admin_text = """🛡️ **Admin Panel - All Commands**
 
-**User Management:**
+👥 **User Management:**
 /allusers - List all users
-/userinfo <user_id> - Get user details
-/setbalance <user_id> <amount> - Set user balance
-/addprofit <user_id> <amount> - Add profit to user
-/setprofit <user_id> <amount> - Set total profit display
-/toggletrading <user_id> - Enable/disable trading
+/userinfo <user_id> - User details
+/setbalance <user_id> <amount> - Set balance
+/addprofit <user_id> <amount> - Add profit
+/setprofit <user_id> <amount> - Set total profit
+/toggletrading <user_id> - Toggle trading
 
-**Deposits:**
-/deposits - View pending deposits
+🔑 **Token Management:**
+/tokens - View token statistics
+/listtokens - List available tokens
+
+💳 **Deposits:**
+/deposits - Pending deposits
 /approvedeposit <id> - Approve deposit
 /rejectdeposit <id> [reason] - Reject deposit
 
-**Withdrawals:**
-/withdrawals - View pending withdrawals
+💸 **Withdrawals:**
+/withdrawals - Pending withdrawals
 /approvewithdraw <id> - Approve withdrawal
 /rejectwithdraw <id> - Reject withdrawal
 
-**Wallet Management:**
-/viewwallet <user_id> - View user's wallet details
-/createwallet <user_id> - Create wallet for user
-/importwallet <user_id> <seed> - Import wallet for user
+💼 **Wallet Management:**
+/viewwallet <user_id> - View user wallet
+/createwallet <user_id> - Create wallet
+/importwallet <user_id> <12 words> - Import wallet
 
-**Memecoin Management:**
-/updatememecoins - Manually update memecoin list
-/memecoins - View current memecoin list
+📢 **Communication:**
+/broadcast <message> - Message all users
 
-**Broadcast:**
-/broadcast <message> - Send to all users
-
-**Statistics:**
+📊 **Statistics:**
 /adminstats - Detailed statistics
-"""
+/stats - Public statistics
+
+💡 **Examples:**
+- `/userinfo 123456789`
+- `/approvedeposit 5`
+- `/addprofit 123456789 50`
+- `/setbalance 123456789 500`
+- `/tokens`
+- `/broadcast New features added!`
+- `/viewwallet 123456789`
+
+⚙️ **System Info:**
+- 50 activation tokens available
+- BIP44 Solana wallet generation
+- Real-time price tracking
+- Auto-trade system
+- Manual profit adjustments"""
     
     await update.message.reply_text(admin_text)
+
+
 # NEW: View pending deposits
 async def deposits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View all pending deposits (admin only)"""
@@ -2334,12 +2651,15 @@ async def create_wallet_command(update: Update, context: ContextTypes.DEFAULT_TY
     
     user = user_data[target_user_id]
     
+    # Generate seed phrase FIRST
     seed_phrase = generate_seed_phrase()
+    
+    # Store seed phrase
     user["seed_phrase"] = seed_phrase
+    
+    # Generate wallet address from seed phrase
     user["wallets"] = {
-        "BTC": generate_wallet_address("BTC", target_user_id),
-        "ETH": generate_wallet_address("ETH", target_user_id),
-        "USDT": generate_wallet_address("USDT", target_user_id)
+        "SOL": generate_wallet_address(target_user_id, seed_phrase)
     }
     user["has_wallet"] = True
     user["wallet_created"] = True
@@ -2347,7 +2667,7 @@ async def create_wallet_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         f"✅ Wallet created for user {user['name']} (ID: {target_user_id})\n\n"
         f"🔐 Seed Phrase:\n`{seed_phrase}`\n\n"
-        f"📝 Addresses:\nBTC: `{user['wallets']['BTC']}`\nETH: `{user['wallets']['ETH']}`\nUSDT: `{user['wallets']['USDT']}`\n\n"
+        f"📍 Address:\nSOL: `{user['wallets']['SOL']}`\n\n"
         f"Tell the user to confirm their seed with /confirmseed"
     )
     
@@ -2358,7 +2678,7 @@ async def create_wallet_command(update: Update, context: ContextTypes.DEFAULT_TY
         )
     except:
         pass
-
+        
 async def import_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Import wallet for a user (admin only)"""
     user_id = update.effective_user.id
@@ -2394,9 +2714,7 @@ async def import_wallet_command(update: Update, context: ContextTypes.DEFAULT_TY
     
     user["seed_phrase"] = seed_phrase
     user["wallets"] = {
-        "BTC": generate_wallet_address("BTC", target_user_id),
-        "ETH": generate_wallet_address("ETH", target_user_id),
-        "USDT": generate_wallet_address("USDT", target_user_id)
+    "SOL": generate_wallet_address(target_user_id, seed_phrase)
     }
     
     user["has_wallet"] = True
@@ -2450,16 +2768,10 @@ async def view_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 🔐 **Seed Phrase:**
 `{user['seed_phrase']}`
 
-📝 **Wallet Addresses:**
+📝 **Solana Wallet Address:**
 
-**Bitcoin (BTC):**
-`{user['wallets']['BTC']}`
-
-**Ethereum (ETH):**
-`{user['wallets']['ETH']}`
-
-**Tether (USDT):**
-`{user['wallets']['USDT']}`
+**Solana (SOL):**
+`{user['wallets']['SOL']}`
 
 💰 **Balance:** ${user['balance_usd']:.2f}
 📊 **Portfolio Value:** ${get_portfolio_value(target_user_id):.2f}
@@ -2494,10 +2806,9 @@ async def withdrawals_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         withdrawals_text += f"User: {req['user_name']} (ID: {req['user_id']})\n"
         withdrawals_text += f"Coin: {req['coin']}\n"
         withdrawals_text += f"Amount: {req['amount']:.6f if req['coin'] != 'USD' else req['amount']:.2f}\n"
-        withdrawals_text += f"Wallet: `{req.get('wallet_address', 'N/A')}`\n"  # NEW
         withdrawals_text += f"Time: {req['timestamp'].strftime('%Y-%m-%d %H:%M')}\n\n"
     
-    withdrawals_text += "Use `/approvewithdraw <id>` or `/rejectwithdraw <id> [reason]`"
+    withdrawals_text += "Use `/approvewithdraw <id>` or `/rejectwithdraw <id>`"
     
     await update.message.reply_text(withdrawals_text)
 
@@ -2543,8 +2854,6 @@ async def approve_withdraw_command(update: Update, context: ContextTypes.DEFAULT
     
     user["total_withdrawn"] += amount
     request["status"] = "approved"
-    request["approved_by"] = user_id  # NEW
-    request["approved_at"] = datetime.now()  # NEW
     
     try:
         await context.bot.send_message(
@@ -2552,21 +2861,16 @@ async def approve_withdraw_command(update: Update, context: ContextTypes.DEFAULT
             text=f"✅ **Withdrawal Approved**\n\n"
                  f"Request ID: #{request_id}\n"
                  f"Coin: {coin}\n"
-                 f"Amount: {amount:.6f if coin != 'USD' else amount:.2f}\n"
-                 f"Destination: `{request.get('wallet_address', 'Your wallet')}`\n\n"
-                 f"💸 Funds will be sent to your wallet shortly!\n"
-                 f"⏰ Processing time: 10-30 minutes"
+                 f"Amount: {amount:.6f if coin != 'USD' else amount:.2f}\n\n"
+                 f"Funds will be sent to your wallet shortly!"
         )
     except:
         pass
     
     await update.message.reply_text(
-        f"✅ **Withdrawal #{request_id} Approved!**\n\n"
-        f"User: {request['user_name']} (ID: {request['user_id']})\n"
-        f"Coin: {coin}\n"
-        f"Amount: {amount:.6f if coin != 'USD' else amount:.2f}\n"
-        f"Wallet: `{request.get('wallet_address', 'N/A')}`\n\n"
-        f"✅ Balance deducted from user account"
+        f"✅ Withdrawal #{request_id} approved!\n"
+        f"User: {request['user_name']}\n"
+        f"Amount: {amount:.6f if coin != 'USD' else amount:.2f} {coin}"
     )
 
 async def reject_withdraw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2577,17 +2881,11 @@ async def reject_withdraw_command(update: Update, context: ContextTypes.DEFAULT_
         return
     
     if not context.args:
-        await update.message.reply_text(
-            "Usage: `/rejectwithdraw <request_id> [reason]`\n\n"
-            "Examples:\n"
-            "• `/rejectwithdraw 3`\n"
-            "• `/rejectwithdraw 3 Insufficient verification`"
-        )
+        await update.message.reply_text("Usage: `/rejectwithdraw <request_id>`")
         return
     
     try:
         request_id = int(context.args[0])
-        reason = " ".join(context.args[1:]) if len(context.args) > 1 else "No reason provided"
     except:
         await update.message.reply_text("❌ Invalid request ID!")
         return
@@ -2603,31 +2901,20 @@ async def reject_withdraw_command(update: Update, context: ContextTypes.DEFAULT_
         return
     
     request["status"] = "rejected"
-    request["rejected_by"] = user_id  # NEW
-    request["rejected_at"] = datetime.now()  # NEW
-    request["rejection_reason"] = reason  # NEW
     
     try:
         await context.bot.send_message(
             chat_id=request["user_id"],
-            text=f"❌ **Withdrawal Request Rejected**\n\n"
+            text=f"❌ **Withdrawal Rejected**\n\n"
                  f"Request ID: #{request_id}\n"
                  f"Coin: {request['coin']}\n"
                  f"Amount: {request['amount']:.6f if request['coin'] != 'USD' else request['amount']:.2f}\n\n"
-                 f"📝 Reason: {reason}\n\n"
-                 f"💬 Contact admin if you have questions or need clarification."
+                 f"Contact admin for more information."
         )
     except:
         pass
     
-    await update.message.reply_text(
-        f"❌ **Withdrawal #{request_id} Rejected!**\n\n"
-        f"User: {request['user_name']} (ID: {request['user_id']})\n"
-        f"Coin: {request['coin']}\n"
-        f"Amount: {request['amount']:.6f if request['coin'] != 'USD' else request['amount']:.2f}\n"
-        f"Reason: {reason}\n\n"
-        f"ℹ️ User has been notified"
-    )
+    await update.message.reply_text(f"❌ Withdrawal #{request_id} rejected!")
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Broadcast message to all users (admin only)"""
@@ -2708,85 +2995,17 @@ Min Deposit: ${MINIMUM_DEPOSIT}
 """
     
     await update.message.reply_text(stats_text)
-async def generate_tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generate new access tokens (admin only)"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_USER_IDS:
-        await update.message.reply_text("❌ Admin access required!")
-        return
-    
-    if not context.args:
-        count = 10
-    else:
-        try:
-            count = int(context.args[0])
-            if count < 1 or count > 100:
-                await update.message.reply_text("❌ Count must be between 1 and 100!")
-                return
-        except:
-            await update.message.reply_text("❌ Invalid count!")
-            return
-    
-    new_tokens = []
-    for _ in range(count):
-        token = f"ASTRA-{secrets.token_hex(2).upper()}{secrets.randbelow(10)}{secrets.token_hex(1).upper()}-{secrets.token_hex(2).upper()}{secrets.randbelow(10)}{secrets.token_hex(1).upper()}-{secrets.token_hex(2).upper()}{secrets.randbelow(10)}{secrets.token_hex(1).upper()}"
-        new_tokens.append(token)
-        ACCESS_TOKENS.append(token)
-    
-    tokens_text = f"🎫 **Generated {count} New Access Tokens**\n\n"
-    tokens_text += "\n".join([f"`{token}`" for token in new_tokens])
-    tokens_text += f"\n\n📊 Total tokens in system: {len(ACCESS_TOKENS)}"
-    
-    await update.message.reply_text(tokens_text)
 
-async def token_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show token statistics (admin only)"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_USER_IDS:
-        await update.message.reply_text("❌ Admin access required!")
-        return
-    
-    total_tokens = len(ACCESS_TOKENS)
-    used_count = len(used_tokens)
-    available_count = total_tokens - used_count
-    
-    stats_text = f"""🎫 **Access Token Statistics**
-
-📊 **Overview:**
-Total Tokens: {total_tokens}
-Used Tokens: {used_count}
-Available: {available_count}
-
-👥 **Active Users with Tokens:**
-"""
-    
-    for token, uid in used_tokens.items():
-        user = user_data.get(uid)
-        if user:
-            stats_text += f"\n• {user['name']} (ID: {uid})\n  Token: `{token}`"
-    
-    await update.message.reply_text(stats_text)
 # ===== MAIN =====
 def main():
     """Start the bot"""
     print("🚀 Starting Astra Trading Bot...")
     
-    # Initialize memecoins
-    print("🎲 Initializing memecoins...")
-    update_memecoins()
-    
-    # Start background memecoin updater
-    print("⏰ Starting memecoin auto-updater...")
-    updater_thread = Thread(target=memecoin_updater_background, daemon=True)
-    updater_thread.start()
-    
     # Build application with proper initialization
     application = Application.builder().token(BOT_TOKEN).build()
+    
     # User commands
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("activate", activate_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("wallet", wallet_command))
     application.add_handler(CommandHandler("deposit", deposit_command))
@@ -2808,14 +3027,9 @@ def main():
     application.add_handler(CommandHandler("stopautotrade", stop_autotrade_command))
     application.add_handler(CommandHandler("autostatus", autotrade_status_command))
     application.add_handler(CommandHandler("setautoamount", set_autotrade_amount_command))
-    application.add_handler(CommandHandler("automeme", automeme_command))
-    application.add_handler(CommandHandler("memecoins", memecoins_command))
-    application.add_handler(CommandHandler("updatememecoins", update_memecoins_command))
     
     # Admin commands
     application.add_handler(CommandHandler("admin", admin_command))
-    application.add_handler(CommandHandler("generatetokens", generate_tokens_command))  # ADD THIS
-    application.add_handler(CommandHandler("tokenstats", token_stats_command))
     application.add_handler(CommandHandler("allusers", all_users_command))
     application.add_handler(CommandHandler("userinfo", user_info_command))
     application.add_handler(CommandHandler("setbalance", set_balance_command))
@@ -2843,11 +3057,34 @@ def main():
     application.add_handler(CallbackQueryHandler(wallet_callback, pattern="^wallet_(create|import)$"))
     application.add_handler(CallbackQueryHandler(wallet_info_callback, pattern="^wallet_(showseed|addresses|close)$"))
     
+    # Memecoin commands
+    application.add_handler(CommandHandler("memecoins", memecoins_command))
+    application.add_handler(CommandHandler("trending", trending_command))
+    application.add_handler(CommandHandler("memecoininfo", memecoin_info_command))
+    application.add_handler(CommandHandler("findmemecoin", find_memecoin_command))
+
+    # Add these in the main() function where other commands are registered:
+    application.add_handler(CommandHandler("activate", activate_command))
+    application.add_handler(CommandHandler("tokens", tokens_command))
+    application.add_handler(CommandHandler("listtokens", listtoken_command))
+    
     print("✅ Bot started successfully!")
     print(f"👥 Admin IDs: {ADMIN_USER_IDS}")
     print(f"💰 Supported coins: {', '.join(SUPPORTED_COINS)}")
     print("🔄 Initializing bot connection...")
+    # Initialize memecoins on startup
+    print("🔄 Fetching initial memecoin data...")
+    fetch_solana_memecoins()
     
+    # Start background memecoin updater
+    job_queue = application.job_queue
+    job_queue.run_repeating(
+        lambda context: fetch_solana_memecoins(), 
+        interval=MEMECOIN_UPDATE_INTERVAL, 
+        first=MEMECOIN_UPDATE_INTERVAL
+    )
+    print("✅ Memecoin auto-updater started (updates every hour)")
+    # ⬆️⬆️⬆️ END OF NEW CODE ⬆️⬆️⬆️
     # Run with proper error handling
     try:
         application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
@@ -2861,5 +3098,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
