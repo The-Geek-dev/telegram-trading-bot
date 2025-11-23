@@ -109,35 +109,22 @@ USED_TOKENS = set()  # Track used tokens
 # ===== CORRECT PHANTOM-COMPATIBLE WALLET GENERATION =====
 # Install: pip install mnemonic solders
 
-def generate_seed_phrase():
-    """Generate a 12-word seed phrase"""
-    from mnemonic import Mnemonic
-    mnemo = Mnemonic("english")
-    return mnemo.generate(strength=128)
+def generate_private_key():
+    """Generate a Solana private key (64 bytes)"""
+    keypair = Keypair()
+    # Return private key in base58 format (standard Solana format)
+    private_key_bytes = bytes(keypair.secret()) + bytes(keypair.pubkey())
+    return base58.b58encode(private_key_bytes).decode('ascii')
 
-
-def generate_wallet_address(user_id, seed_phrase):
-    """Generate Solana wallet address - EXACTLY like Phantom using BIP44 derivation"""
+# Replace the generate_wallet_address function with this:
+def generate_wallet_address(user_id, private_key):
+    """Generate Solana wallet address from private key"""
     try:
-        from mnemonic import Mnemonic
-        from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins, Bip44Changes
-        from solders.keypair import Keypair
+        # Decode base58 private key
+        private_key_bytes = base58.b58decode(private_key)
         
-        # Generate seed from mnemonic (BIP39)
-        seed_bytes = Bip39SeedGenerator(seed_phrase).Generate()
-        
-        # Derive Solana key using BIP44 path: m/44'/501'/0'/0'
-        # 501 is Solana's coin type
-        bip44_mst = Bip44.FromSeed(seed_bytes, Bip44Coins.SOLANA)
-        bip44_acc = bip44_mst.Purpose().Coin().Account(0)
-        bip44_chg = bip44_acc.Change(Bip44Changes.CHAIN_EXT)
-        bip44_addr = bip44_chg.AddressIndex(0)
-        
-        # Get the private key (32 bytes)
-        private_key_bytes = bip44_addr.PrivateKey().Raw().ToBytes()
-        
-        # Create Solana keypair from private key
-        keypair = Keypair.from_seed(private_key_bytes)
+        # Recreate keypair from private key
+        keypair = Keypair.from_bytes(private_key_bytes)
         
         # Get public key (wallet address)
         wallet_address = str(keypair.pubkey())
@@ -335,6 +322,405 @@ def should_update_memecoins():
     
     elapsed = (datetime.now() - MEMECOIN_LAST_UPDATE).total_seconds()
     return elapsed >= MEMECOIN_UPDATE_INTERVAL
+def get_token_from_birdeye(contract_address):
+    """Get token info from Birdeye API"""
+    try:
+        headers = {
+            "X-API-KEY": os.getenv("BIRDEYE_API_KEY", ""),  # Optional: Get from env
+        }
+        
+        # Try without API key first (limited)
+        url = f"https://public-api.birdeye.so/public/token_overview?address={contract_address}"
+        response = requests.get(url, headers=headers if headers["X-API-KEY"] else {}, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success') and data.get('data'):
+                token_data = data['data']
+                return {
+                    "name": token_data.get('name', 'Unknown'),
+                    "symbol": token_data.get('symbol', 'UNKNOWN').upper(),
+                    "price": token_data.get('price', 0),
+                    "market_cap": token_data.get('mc', 0),
+                    "volume_24h": token_data.get('v24hUSD', 0),
+                    "price_change_24h": token_data.get('price24hChangePercent', 0),
+                    "liquidity": token_data.get('liquidity', 0),
+                    "source": "birdeye"
+                }
+    except Exception as e:
+        print(f"Birdeye API error: {e}")
+    return None
+
+def get_token_from_dexscreener(contract_address):
+    """Get token info from DexScreener API"""
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{contract_address}"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('pairs') and len(data['pairs']) > 0:
+                # Get the pair with highest liquidity
+                pair = max(data['pairs'], key=lambda x: x.get('liquidity', {}).get('usd', 0))
+                
+                base_token = pair.get('baseToken', {})
+                price_usd = float(pair.get('priceUsd', 0))
+                
+                return {
+                    "name": base_token.get('name', 'Unknown'),
+                    "symbol": base_token.get('symbol', 'UNKNOWN').upper(),
+                    "price": price_usd,
+                    "market_cap": pair.get('marketCap', 0),
+                    "volume_24h": pair.get('volume', {}).get('h24', 0),
+                    "price_change_24h": pair.get('priceChange', {}).get('h24', 0),
+                    "liquidity": pair.get('liquidity', {}).get('usd', 0),
+                    "dex": pair.get('dexId', 'Unknown'),
+                    "source": "dexscreener"
+                }
+    except Exception as e:
+        print(f"DexScreener API error: {e}")
+    return None
+
+def get_token_from_jupiter(contract_address):
+    """Get token info from Jupiter API"""
+    try:
+        url = f"https://price.jup.ag/v4/price?ids={contract_address}"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('data') and contract_address in data['data']:
+                token_data = data['data'][contract_address]
+                return {
+                    "price": token_data.get('price', 0),
+                    "source": "jupiter"
+                }
+    except Exception as e:
+        print(f"Jupiter API error: {e}")
+    return None
+
+def get_token_from_pumpfun(contract_address):
+    """Get token info from Pump.fun API"""
+    try:
+        # Pump.fun API endpoint
+        url = f"https://frontend-api.pump.fun/coins/{contract_address}"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Calculate market cap if available
+            market_cap = 0
+            if data.get('usd_market_cap'):
+                market_cap = data['usd_market_cap']
+            
+            return {
+                "name": data.get('name', 'Unknown'),
+                "symbol": data.get('symbol', 'UNKNOWN').upper(),
+                "price": data.get('price_usd', 0),
+                "market_cap": market_cap,
+                "volume_24h": data.get('volume_24h', 0),
+                "price_change_24h": data.get('price_change_24h_percent', 0),
+                "liquidity": data.get('liquidity', 0),
+                "image": data.get('image_uri', ''),
+                "description": data.get('description', ''),
+                "twitter": data.get('twitter', ''),
+                "telegram": data.get('telegram', ''),
+                "website": data.get('website', ''),
+                "created_timestamp": data.get('created_timestamp', 0),
+                "creator": data.get('creator', ''),
+                "source": "pumpfun"
+            }
+    except Exception as e:
+        print(f"Pump.fun API error: {e}")
+    return None
+
+def get_token_from_raydium(contract_address):
+    """Get token info from Raydium API"""
+    try:
+        url = f"https://api.raydium.io/v2/ammV3/ammPools"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # Search for pools containing this token
+            for pool in data.get('data', []):
+                if (pool.get('mintA', {}).get('address') == contract_address or 
+                    pool.get('mintB', {}).get('address') == contract_address):
+                    
+                    token_info = pool.get('mintA') if pool.get('mintA', {}).get('address') == contract_address else pool.get('mintB')
+                    
+                    return {
+                        "name": token_info.get('name', 'Unknown'),
+                        "symbol": token_info.get('symbol', 'UNKNOWN').upper(),
+                        "price": float(pool.get('price', 0)),
+                        "liquidity": float(pool.get('tvl', 0)),
+                        "volume_24h": float(pool.get('volume24h', 0)),
+                        "source": "raydium"
+                    }
+    except Exception as e:
+        print(f"Raydium API error: {e}")
+    return None
+
+def get_token_from_orca(contract_address):
+    """Get token info from Orca API"""
+    try:
+        url = f"https://api.mainnet.orca.so/v1/token/{contract_address}"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "name": data.get('name', 'Unknown'),
+                "symbol": data.get('symbol', 'UNKNOWN').upper(),
+                "price": data.get('price', 0),
+                "volume_24h": data.get('volume24h', 0),
+                "source": "orca"
+            }
+    except Exception as e:
+        print(f"Orca API error: {e}")
+    return None
+
+def get_token_from_geckoterminal(contract_address):
+    """Get token info from GeckoTerminal (tracks all DEXs)"""
+    try:
+        url = f"https://api.geckoterminal.com/api/v2/networks/solana/tokens/{contract_address}"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            token = data.get('data', {}).get('attributes', {})
+            
+            return {
+                "name": token.get('name', 'Unknown'),
+                "symbol": token.get('symbol', 'UNKNOWN').upper(),
+                "price": float(token.get('price_usd', 0)),
+                "market_cap": float(token.get('fdv_usd', 0)),
+                "volume_24h": float(token.get('volume_usd', {}).get('h24', 0)),
+                "price_change_24h": float(token.get('price_change_percentage', {}).get('h24', 0)),
+                "image": token.get('image_url', ''),
+                "source": "geckoterminal"
+            }
+    except Exception as e:
+        print(f"GeckoTerminal API error: {e}")
+    return None
+
+def get_all_pump_fun_tokens():
+    """Get trending tokens from Pump.fun"""
+    try:
+        url = "https://frontend-api.pump.fun/coins?sort=created_timestamp&order=DESC&limit=50"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            tokens = {}
+            
+            for coin in data[:20]:  # Get top 20 newest
+                symbol = coin.get('symbol', '').upper()
+                if symbol:
+                    tokens[symbol] = {
+                        "id": f"pumpfun-{coin.get('mint', '')}",
+                        "name": coin.get('name', 'Unknown'),
+                        "symbol": symbol,
+                        "price": coin.get('price_usd', 0),
+                        "market_cap": coin.get('usd_market_cap', 0),
+                        "volume_24h": coin.get('volume_24h', 0),
+                        "image": coin.get('image_uri', ''),
+                        "contract_address": coin.get('mint', ''),
+                        "type": "pumpfun",
+                        "source": "pumpfun"
+                    }
+            
+            return tokens
+    except Exception as e:
+        print(f"❌ Error fetching Pump.fun tokens: {e}")
+    return {}
+
+def get_token_metadata_from_solana(contract_address):
+    """Get basic token metadata from Solana blockchain via Solscan API"""
+    try:
+        url = f"https://public-api.solscan.io/token/meta?tokenAddress={contract_address}"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "name": data.get('name', 'Unknown Token'),
+                "symbol": data.get('symbol', 'UNKNOWN').upper(),
+                "decimals": data.get('decimals', 9),
+                "icon": data.get('icon', ''),
+                "source": "solscan"
+            }
+    except Exception as e:
+        print(f"Solscan API error: {e}")
+    return None
+
+def get_memecoin_by_address(contract_address):
+    """Get memecoin info by Solana contract address - searches EVERYWHERE"""
+    global SOLANA_MEMECOINS, MEMECOIN_BY_ADDRESS
+    
+    # Update if needed
+    if should_update_memecoins():
+        fetch_solana_memecoins()
+    
+    address_lower = contract_address.lower()
+    
+    # Check if we have it in cache
+    if address_lower in MEMECOIN_BY_ADDRESS:
+        symbol = MEMECOIN_BY_ADDRESS[address_lower]
+        return SOLANA_MEMECOINS.get(symbol)
+    
+    print(f"🔍 Searching for token: {contract_address}")
+    print("🌐 Trying ALL available sources...")
+    
+    token_info = {}
+    sources_tried = []
+    
+    # 1. Try Pump.fun FIRST (best for new memecoins)
+    print("🎯 Checking Pump.fun...")
+    sources_tried.append("Pump.fun")
+    pumpfun_data = get_token_from_pumpfun(contract_address)
+    if pumpfun_data:
+        token_info.update(pumpfun_data)
+        print(f"✅ Found on Pump.fun: {pumpfun_data.get('name')}")
+    
+    # 2. Try GeckoTerminal (tracks ALL DEXs)
+    if not token_info or not token_info.get('price'):
+        print("🦎 Checking GeckoTerminal...")
+        sources_tried.append("GeckoTerminal")
+        gecko_data = get_token_from_geckoterminal(contract_address)
+        if gecko_data:
+            for key, value in gecko_data.items():
+                if key not in token_info or (value and not token_info.get(key)):
+                    token_info[key] = value
+            print(f"✅ Found on GeckoTerminal")
+    
+    # 3. Try DexScreener (comprehensive DEX aggregator)
+    if not token_info or not token_info.get('price'):
+        print("📊 Checking DexScreener...")
+        sources_tried.append("DexScreener")
+        dex_data = get_token_from_dexscreener(contract_address)
+        if dex_data:
+            for key, value in dex_data.items():
+                if key not in token_info or (value and not token_info.get(key)):
+                    token_info[key] = value
+            print(f"✅ Found on DexScreener: {dex_data.get('name')}")
+    
+    # 4. Try Birdeye
+    if not token_info or not token_info.get('price'):
+        print("🐦 Checking Birdeye...")
+        sources_tried.append("Birdeye")
+        birdeye_data = get_token_from_birdeye(contract_address)
+        if birdeye_data:
+            for key, value in birdeye_data.items():
+                if key not in token_info or (value and not token_info.get(key)):
+                    token_info[key] = value
+            print(f"✅ Found on Birdeye")
+    
+    # 5. Try Jupiter for price
+    if not token_info.get('price') or token_info.get('price') == 0:
+        print("🪐 Checking Jupiter...")
+        sources_tried.append("Jupiter")
+        jupiter_data = get_token_from_jupiter(contract_address)
+        if jupiter_data and jupiter_data.get('price'):
+            token_info['price'] = jupiter_data['price']
+            print(f"✅ Got price from Jupiter: ${jupiter_data['price']}")
+    
+    # 6. Try Raydium
+    if not token_info or not token_info.get('price'):
+        print("🌊 Checking Raydium...")
+        sources_tried.append("Raydium")
+        raydium_data = get_token_from_raydium(contract_address)
+        if raydium_data:
+            for key, value in raydium_data.items():
+                if key not in token_info or (value and not token_info.get(key)):
+                    token_info[key] = value
+            print(f"✅ Found on Raydium")
+    
+    # 7. Try Orca
+    if not token_info or not token_info.get('price'):
+        print("🐋 Checking Orca...")
+        sources_tried.append("Orca")
+        orca_data = get_token_from_orca(contract_address)
+        if orca_data:
+            for key, value in orca_data.items():
+                if key not in token_info or (value and not token_info.get(key)):
+                    token_info[key] = value
+            print(f"✅ Found on Orca")
+    
+    # 8. Try Solscan for metadata
+    if not token_info.get('symbol') or token_info.get('symbol') == 'UNKNOWN':
+        print("🔍 Checking Solscan...")
+        sources_tried.append("Solscan")
+        solscan_data = get_token_metadata_from_solana(contract_address)
+        if solscan_data:
+            for key, value in solscan_data.items():
+                if key not in token_info or not token_info.get(key):
+                    token_info[key] = value
+            print(f"✅ Got metadata from Solscan")
+    
+    # 9. Try CoinGecko last (for established tokens)
+    if not token_info:
+        print("🦎 Checking CoinGecko...")
+        sources_tried.append("CoinGecko")
+        try:
+            url = f"https://api.coingecko.com/api/v3/coins/solana/contract/{contract_address}"
+            response = requests.get(url, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                token_info = {
+                    "name": data.get('name', 'Unknown'),
+                    "symbol": data.get('symbol', 'UNKNOWN').upper(),
+                    "price": data.get('market_data', {}).get('current_price', {}).get('usd', 0),
+                    "market_cap": data.get('market_data', {}).get('market_cap', {}).get('usd', 0),
+                    "price_change_24h": data.get('market_data', {}).get('price_change_percentage_24h', 0),
+                    "volume_24h": data.get('market_data', {}).get('total_volume', {}).get('usd', 0),
+                    "image": data.get('image', {}).get('large', ''),
+                    "source": "coingecko"
+                }
+                print(f"✅ Found on CoinGecko")
+        except Exception as e:
+            print(f"CoinGecko error: {e}")
+    
+    # If we found any data, format and cache it
+    if token_info and token_info.get('symbol'):
+        symbol = token_info['symbol'].upper()
+        
+        # Create standardized memecoin data
+        memecoin_data = {
+            "id": token_info.get('id', f"custom-{symbol.lower()}"),
+            "name": token_info.get('name', 'Unknown Token'),
+            "symbol": symbol,
+            "price": token_info.get('price', 0),
+            "market_cap": token_info.get('market_cap', 0),
+            "price_change_24h": token_info.get('price_change_24h', 0),
+            "volume_24h": token_info.get('volume_24h', 0),
+            "liquidity": token_info.get('liquidity', 0),
+            "image": token_info.get('image', token_info.get('icon', '')),
+            "type": "custom",
+            "contract_address": contract_address,
+            "source": token_info.get('source', 'multiple'),
+            "dex": token_info.get('dex', 'N/A'),
+            "description": token_info.get('description', ''),
+            "twitter": token_info.get('twitter', ''),
+            "telegram": token_info.get('telegram', ''),
+            "website": token_info.get('website', ''),
+        }
+        
+        SOLANA_MEMECOINS[symbol] = memecoin_data
+        MEMECOIN_BY_ADDRESS[address_lower] = symbol
+        
+        print(f"✅ Token found and added: {memecoin_data['name']} ({symbol})")
+        print(f"   Source: {memecoin_data['source']}")
+        print(f"   Price: ${memecoin_data['price']}")
+        print(f"   Searched: {', '.join(sources_tried)}")
+        return memecoin_data
+    
+    print(f"❌ Token not found on any platform!")
+    print(f"   Searched: {', '.join(sources_tried)}")
+    print(f"   Contract: {contract_address}")
+    return None
 
 def get_memecoin_by_address(contract_address):
     """Get memecoin info by Solana contract address"""
@@ -798,15 +1184,15 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = user_data[user_id]
     
     if query.data == "wallet_create":
-        # Generate seed phrase FIRST
-        seed_phrase = generate_seed_phrase()
+        # Generate private key
+        private_key = generate_private_key()
         
-        # Store seed phrase
-        user["seed_phrase"] = seed_phrase
+        # Store private key
+        user["seed_phrase"] = private_key  # Reusing field name for compatibility
         
-        # Generate wallet address from seed phrase
+        # Generate wallet address from private key
         user["wallets"] = {
-            "SOL": generate_wallet_address(user_id, seed_phrase)
+            "SOL": generate_wallet_address(user_id, private_key)
         }
         
         user["has_wallet"] = True
@@ -814,39 +1200,40 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         wallet_text = f"""✅ **Wallet Created Successfully!**
 
-🔐 **Your Seed Phrase:**
-`{seed_phrase}`
+🔐 **Your Private Key:**
+`{private_key}`
 
 ⚠️ **CRITICAL - READ CAREFULLY:**
-- Write down these 12 words on paper
-- NEVER share them with anyone
-- Store them in a safe place
+- Write down this private key securely
+- NEVER share it with anyone
+- Store it in a safe place
 - This is the ONLY way to recover your wallet
-- Lost seed phrase = Lost funds FOREVER!
+- Lost private key = Lost funds FOREVER!
+- You can import this key into Phantom, Solflare, or any Solana wallet
 
 📍 **Your Solana Wallet Address:**
 
 **Solana (SOL):**
 `{user['wallets']['SOL']}`
 
-✅ To confirm you saved your seed phrase, type:
+✅ To confirm you saved your private key, type:
 `/confirmseed`
 
 Then you can start depositing and trading!"""
-        
+
         await query.edit_message_text(wallet_text)
-        
+    
     elif query.data == "wallet_import":
         await query.edit_message_text(
             "📥 **Import Wallet**\n\n"
-            "Send your 12-word seed phrase in this format:\n\n"
-            "`/importseed word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12`\n\n"
+            "Send your private key in this format:\n\n"
+            "`/importseed <your_private_key>`\n\n"
             "⚠️ **Warning:** Make sure you're in a private chat!\n"
-            "Your seed phrase will be deleted immediately after processing."
+            "Your private key will be deleted immediately after processing."
         )
 
 async def import_seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Import wallet from seed phrase"""
+    """Import wallet from private key"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name or "Trader"
     
@@ -858,29 +1245,37 @@ async def import_seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except:
         pass
     
-    if len(context.args) != 12:
+    if len(context.args) != 1:
         await update.message.reply_text(
-            "❌ **Invalid Seed Phrase**\n\n"
-            "Seed phrase must be exactly 12 words.\n\n"
-            "Format: `/importseed word1 word2 ... word12`"
+            "❌ **Invalid Private Key**\n\n"
+            "Private key must be a single base58 string.\n\n"
+            "Format: `/importseed <private_key>`"
         )
         return
     
-    seed_phrase = " ".join(context.args)
-    user["seed_phrase"] = seed_phrase
+    private_key = context.args[0]
+    user["seed_phrase"] = private_key
     
-    user["wallets"] = {
-        "SOL": generate_wallet_address(user_id, seed_phrase)
-}
+    try:
+        user["wallets"] = {
+            "SOL": generate_wallet_address(user_id, private_key)
+        }
+    except:
+        await update.message.reply_text(
+            "❌ **Invalid Private Key**\n\n"
+            "The private key you provided is not valid.\n"
+            "Please check and try again."
+        )
+        return
     
     user["has_wallet"] = True
     user["wallet_created"] = True
     
     wallet_text = f"""✅ **Wallet Imported Successfully!**
 
-Your wallet has been restored from your seed phrase.
+Your wallet has been restored from your private key.
 
-📝 **Your Solana Wallet Address:**
+📍 **Your Solana Wallet Address:**
 
 **Solana (SOL):**
 `{user['wallets']['SOL']}`
@@ -888,7 +1283,6 @@ Your wallet has been restored from your seed phrase.
 🎉 You're all set! Start trading with /help"""
     
     await update.message.reply_text(wallet_text)
-
 async def confirm_seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Confirm user saved their seed phrase"""
     user_id = update.effective_user.id
@@ -2996,6 +3390,38 @@ Min Deposit: ${MINIMUM_DEPOSIT}
     
     await update.message.reply_text(stats_text)
 
+async def pumpfun_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show latest Pump.fun tokens"""
+    await update.message.reply_text("🎯 Fetching latest Pump.fun tokens...")
+    
+    tokens = get_all_pump_fun_tokens()
+    
+    if not tokens:
+        await update.message.reply_text("⚠️ Unable to fetch Pump.fun tokens. Try again later.")
+        return
+    
+    pumpfun_text = "🚀 **Latest Pump.fun Tokens**\n\n"
+    
+    for i, (symbol, data) in enumerate(list(tokens.items())[:15], 1):
+        price = data['price']
+        if price >= 1:
+            price_str = f"${price:,.4f}"
+        elif price >= 0.01:
+            price_str = f"${price:.6f}"
+        else:
+            price_str = f"${price:.10f}"
+        
+        pumpfun_text += f"{i}. **{data['name']} ({symbol})**\n"
+        pumpfun_text += f"   💰 {price_str}\n"
+        pumpfun_text += f"   📊 MCap: ${data.get('market_cap', 0):,.0f}\n"
+        pumpfun_text += f"   📍 `{data['contract_address'][:8]}...`\n\n"
+    
+    pumpfun_text += "\n**Trade any token:**\n"
+    pumpfun_text += "• `/buy <symbol> <amount>` - Buy token\n"
+    pumpfun_text += "• `/findmemecoin <address>` - Add by contract\n\n"
+    pumpfun_text += f"Total: {len(tokens)} tokens"
+    
+    await update.message.reply_text(pumpfun_text)
 # ===== MAIN =====
 def main():
     """Start the bot"""
@@ -3062,6 +3488,7 @@ def main():
     application.add_handler(CommandHandler("trending", trending_command))
     application.add_handler(CommandHandler("memecoininfo", memecoin_info_command))
     application.add_handler(CommandHandler("findmemecoin", find_memecoin_command))
+    application.add_handler(CommandHandler("pumpfun", pumpfun_command))
 
     # Add these in the main() function where other commands are registered:
     application.add_handler(CommandHandler("activate", activate_command))
