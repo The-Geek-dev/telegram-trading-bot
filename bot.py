@@ -1033,71 +1033,7 @@ async def auto_trade_loop(context: ContextTypes.DEFAULT_TYPE, user_id: int, dura
 
 
 # ===== COMMAND HANDLERS =====
-async def activate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Activate account with token"""
-    user_id = update.effective_user.id
-    user_name = update.effective_user.first_name or "Trader"
-    
-    initialize_user(user_id, user_name)
-    user = user_data[user_id]
-    
-    if user["token_activated"]:
-        await update.message.reply_text(
-            f"✅ Your account is already activated!\n\n"
-            f"Token: `{user['activation_token']}`\n\n"
-            f"Use /start to continue."
-        )
-        return
-    
-    if not context.args:
-        await update.message.reply_text(
-            "🔑 **Account Activation Required**\n\n"
-            "To use Astra Trading Bot, you need an activation token.\n\n"
-            "**Usage:** `/activate <token>`\n\n"
-            "**Example:**\n"
-            "`/activate ASTRA-2K9F-8H3L-9M2P`\n\n"
-            "📧 Contact admin to get your activation token!"
-        )
-        return
-    
-    token = context.args[0].strip().upper()
-    
-    # Check if token is valid
-    if token not in VALID_TOKENS:
-        await update.message.reply_text(
-            "❌ **Invalid Token!**\n\n"
-            "The token you entered is not valid.\n\n"
-            "Please check your token and try again.\n"
-            "Contact admin if you need help."
-        )
-        return
-    
-    # Check if token already used
-    if token in USED_TOKENS:
-        await update.message.reply_text(
-            "❌ **Token Already Used!**\n\n"
-            "This token has already been activated by another user.\n\n"
-            "Each token can only be used once.\n"
-            "Contact admin for a new token."
-        )
-        return
-    
-    # Activate account
-    user["token_activated"] = True
-    user["activation_token"] = token
-    USED_TOKENS.add(token)
-    
-    await update.message.reply_text(
-        f"🎉 **Account Activated Successfully!**\n\n"
-        f"✅ Token: `{token}`\n"
-        f"👤 Welcome, {user_name}!\n\n"
-        f"Your account is now fully activated!\n\n"
-        f"**Next Steps:**\n"
-        f"1. Use /start to create your wallet\n"
-        f"2. Deposit funds with /deposit\n"
-        f"3. Start trading!\n\n"
-        f"Use /help to see all commands."
-    )
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user = update.effective_user
@@ -1105,21 +1041,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = user.first_name or "Trader"
     
     initialize_user(user_id, user_name)
-    
-    # Check if user has activated token
-    if not check_token_activated(user_id):
-        await update.message.reply_text(
-            f"🔒 **Account Activation Required**\n\n"
-            f"Hey {user_name}! 👋\n\n"
-            f"To use Astra Trading Bot, you need to activate your account with a token.\n\n"
-            f"**How to activate:**\n"
-            f"Use `/activate <your-token>`\n\n"
-            f"**Example:**\n"
-            f"`/activate ASTRA-2K9F-8H3L-9M2P`\n\n"
-            f"📧 Don't have a token? Contact admin to get one!\n\n"
-            f"💡 Each token can only be used once."
-        )
-        return
     
     if not user_data[user_id]["has_wallet"]:
         keyboard = [
@@ -1156,7 +1077,7 @@ Status: {"✅ Active" if user_data[user_id]['trading_enabled'] else "⛔ Disable
 📊 **Supported Coins:**
 BTC, ETH, BNB, XRP, ADA, DOGE, SOL, DOT, MATIC, AVAX, LINK, UNI
 
-📥 **Quick Commands:**
+🔥 **Quick Commands:**
 /wallet - Manage your wallet
 /balance - Check your balance
 /portfolio - View your holdings
@@ -1463,14 +1384,7 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     initialize_user(user_id, user_name)
     # Check token activation
-    if not check_token_activated(user_id):
-        await update.message.reply_text(
-            "🔒 **Account Not Activated**\n\n"
-            "You need to activate your account first!\n\n"
-            "Use `/activate <token>` to activate.\n"
-            "Contact admin to get a token."
-        )
-        return
+    
     user = user_data[user_id]
     
     if not user["has_wallet"]:
@@ -1682,14 +1596,7 @@ async def request_withdraw_command(update: Update, context: ContextTypes.DEFAULT
 
     initialize_user(user_id, user_name)
     # Check token activation
-    if not check_token_activated(user_id):
-        await update.message.reply_text(
-            "🔒 **Account Not Activated**\n\n"
-            "You need to activate your account first!\n\n"
-            "Use `/activate <token>` to activate.\n"
-            "Contact admin to get a token."
-        )
-        return
+    
     user = user_data[user_id]
 
     if len(context.args) < 2:
@@ -2336,13 +2243,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show help message"""
     user_id = update.effective_user.id
     
-    if not check_token_activated(user_id):
-        await update.message.reply_text(
-            "🔒 **Activate Your Account First!**\n\n"
-            "Use `/activate <token>` to get started.\n\n"
-            "Contact admin for an activation token."
-        )
-        return
+    
     
     help_text = """📚 **Astra Trading Bot - User Commands**
 
@@ -3459,10 +3360,7 @@ def main():
     application.add_handler(CommandHandler("findmemecoin", find_memecoin_command))
     application.add_handler(CommandHandler("pumpfun", pumpfun_command))
 
-    # Add these in the main() function where other commands are registered:
-    application.add_handler(CommandHandler("activate", activate_command))
-    application.add_handler(CommandHandler("tokens", tokens_command))
-    application.add_handler(CommandHandler("listtokens", listtoken_command))
+    
     
     print("✅ Bot started successfully!")
     print(f"👥 Admin IDs: {ADMIN_USER_IDS}")
