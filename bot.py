@@ -1396,27 +1396,22 @@ async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 **Solana (SOL):**
 `{user['wallets']['SOL']}`
 
-**Step 2:** After sending, submit a deposit request:
+**Step 2:** After sending, add your balance:
 Use `/addbalance <amount>` 
 
 Example: `/addbalance 100` (if you deposited $100 worth of SOL)
-
-**Step 3:** Wait for admin verification
-An admin will verify your deposit and approve it.
 
 ⚠️ **Important:**
 - This is YOUR wallet - you control it!
 - Minimum: ${MINIMUM_DEPOSIT}
 - Only send SOL on Solana network
-- Admin must verify before balance is added
 
 💡 Check /wallet anytime to see your address!"""
     
     await update.message.reply_text(deposit_text)
-
 # MODIFIED: Users now request deposit, admin must approve
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User requests to add balance after depositing - requires admin approval"""
+    """User adds balance after depositing - instant approval"""
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name or "Trader"
     
@@ -1445,48 +1440,22 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ Minimum deposit is ${MINIMUM_DEPOSIT}")
         return
     
-    # Create deposit request
-    deposit_request = {
-        "id": len(deposit_requests) + 1,
-        "user_id": user_id,
-        "user_name": user_name,
-        "amount": amount,
-        "status": "pending",
-        "timestamp": datetime.now()
-    }
+    # Add balance directly without admin approval
+    user["balance_usd"] += amount
+    user["total_deposited"] += amount
     
-    deposit_requests.append(deposit_request)
+    if user["initial_balance"] == 0:
+        user["initial_balance"] = amount
     
-    # Notify user
+    bot_stats["total_deposits"] += amount
+    
+    # Notify user of success
     await update.message.reply_text(
-        f"✅ **Deposit Request Submitted**\n\n"
-        f"Request ID: #{deposit_request['id']}\n"
-        f"Amount: ${amount:.2f}\n\n"
-        f"Status: ⏳ Pending Admin Verification\n\n"
-        f"An admin will verify your deposit and approve it shortly.\n"
-        f"You'll be notified once your balance is updated!"
-    )
-    
-    # Notify admins
-    admin_msg = (
-        f"💰 **New Deposit Request**\n\n"
-        f"Request ID: #{deposit_request['id']}\n"
-        f"User: {user_name} (ID: {user_id})\n"
+        f"✅ **Balance Added Successfully**\n\n"
         f"Amount: ${amount:.2f}\n"
-        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        f"⚠️ **Action Required:**\n"
-        f"1. Verify deposit in user's wallet\n"
-        f"2. Use `/approvedeposit {deposit_request['id']}` to approve\n"
-        f"3. Use `/rejectdeposit {deposit_request['id']}` to reject\n\n"
-        f"View wallet: `/viewwallet {user_id}`"
+        f"New Balance: ${user['balance_usd']:.2f}\n\n"
+        f"🎯 Ready to trade! Use /balance to see your stats."
     )
-    
-    for admin_id in ADMIN_USER_IDS:
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=admin_msg)
-        except:
-            pass
-
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show user balance and PnL"""
     user_id = update.effective_user.id
