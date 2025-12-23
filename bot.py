@@ -48,60 +48,9 @@ bot_stats = {
     "start_time": datetime.now()
 }
 # ===== TOKEN SYSTEM =====
-VALID_TOKENS = [
-    "ASTRA-2K9F-8H3L-9M3P",
-    "ASTRA-7Q4R-3N8W-5K1X",
-    "ASTRA-6P2M-9L4H-7R3Y",
-    "ASTRA-4W8N-2K5Q-1M9Z",
-    "ASTRA-3H7R-6P9L-8N2A",
-    "ASTRA-9M4K-7W2Q-3H5B",
-    "ASTRA-5L8P-4N6R-2W9C",
-    "ASTRA-1Q3M-8K7H-6P4D",
-    "ASTRA-8R6N-5L3W-9M2E",
-    "ASTRA-2P9K-7H4Q-1W8F",
-    "ASTRA-6W3L-9R5M-4K7G",
-    "ASTRA-4K7P-2M8N-5W3H",
-    "ASTRA-7H9R-6L2K-8P4I",
-    "ASTRA-3M5W-1Q9N-7R6J",
-    "ASTRA-9P2K-4H7L-3W5K",
-    "ASTRA-5R8M-7K3P-2N9L",
-    "ASTRA-1L6W-9H4R-8K3M",
-    "ASTRA-8K3P-5M7N-1R9N",
-    "ASTRA-2W9L-6R4H-7P3O",
-    "ASTRA-6H4M-3K8R-9L2P",
-    "ASTRA-4P7W-1M5K-8R6Q",
-    "ASTRA-7M2L-9K6P-3H8R",
-    "ASTRA-3R5K-8W2M-4P7S",
-    "ASTRA-9L6H-2P4R-7M3T",
-    "ASTRA-5K9M-6R3W-1L8U",
-    "ASTRA-1P4L-7M9K-5R2V",
-    "ASTRA-8W7R-3K5M-9P6W",
-    "ASTRA-2M3K-6L8P-4W9X",
-    "ASTRA-6R9W-1M4L-8K7Y",
-    "ASTRA-4L2P-9R6M-3K5Z",
-    "ASTRA-7K8M-5W3R-2P9A1",
-    "ASTRA-3P6L-8M2K-9W4B1",
-    "ASTRA-9R4K-7P5M-1L8C1",
-    "ASTRA-5M7W-2K9R-6P3D1",
-    "ASTRA-1K5L-8R3M-4W9E1",
-    "ASTRA-8P2M-6K7R-3L5F1",
-    "ASTRA-2R9K-4M6W-7P8G1",
-    "ASTRA-6L3P-1K9M-5R7H1",
-    "ASTRA-4W8R-9L2K-8M6I1",
-    "ASTRA-7M5K-3P8L-2W9J1",
-    "ASTRA-3K9M-6R4P-1L7K1",
-    "ASTRA-9W2L-5M8K-7R4L1",
-    "ASTRA-5P6R-8K3M-4W2M1",
-    "ASTRA-1M8K-7L5R-9P3N1",
-    "ASTRA-8L4P-2R9M-6K7O1",
-    "ASTRA-2K7M-5W3L-8R9P1",
-    "ASTRA-6M9R-1P4K-3L8Q1",
-    "ASTRA-4R3K-7M6P-9W2R1",
-    "ASTRA-7L8W-4K2M-5P9S1",
-    "ASTRA-3W6M-9R5K-2L8T1"
-]
 
-USED_TOKENS = set()  # Track used tokens
+
+
 
 
 # ===== WALLET GENERATION (FIXED) =====
@@ -797,18 +746,11 @@ def initialize_user(user_id, user_name):
             "join_date": datetime.now(),
            "last_active": datetime.now(),
             "manual_profit": 0.0,  # Admin-added profit
-            "token_activated": False,  # NEW
-            "activation_token": None    # NEW
+           
         }
         bot_stats["total_users"] += 1
 
-def check_token_activated(user_id):
-    """Check if user has activated their account with a token"""
-    # Removed admin bypass - all users must activate with token
-    if user_id not in user_data:
-        return False
-    
-    return user_data[user_id].get("token_activated", False)
+
 def calculate_pnl(user_id):
     """Calculate user's profit/loss (includes admin-added manual profit)"""
     if user_id not in user_data:
@@ -1383,8 +1325,6 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name or "Trader"
     
     initialize_user(user_id, user_name)
-    # Check token activation
-    
     user = user_data[user_id]
     
     if not user["has_wallet"]:
@@ -1524,15 +1464,7 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name or "Trader"
     
     initialize_user(user_id, user_name)
-    # Check token activation
-    if not check_token_activated(user_id):
-        await update.message.reply_text(
-            "🔒 **Account Not Activated**\n\n"
-            "You need to activate your account first!\n\n"
-            "Use `/activate <token>` to activate.\n"
-            "Contact admin to get a token."
-        )
-        return
+    
     user = user_data[user_id]
     
     if not user["trade_history"]:
@@ -1595,7 +1527,7 @@ async def request_withdraw_command(update: Update, context: ContextTypes.DEFAULT
     user_name = update.effective_user.first_name or "Trader"
 
     initialize_user(user_id, user_name)
-    # Check token activation
+   
     
     user = user_data[user_id]
 
@@ -2248,7 +2180,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """📚 **Astra Trading Bot - User Commands**
 
 🔑 **Account:**
-/activate <token> - Activate your account
+
 /start - Create or import wallet
 
 💼 **Wallet:**
@@ -2289,7 +2221,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 💡 **Examples:**
-- `/activate ASTRA-2K9F-8H3L-9M2P`
+
 - `/buy BTC 100` - Buy $100 of Bitcoin
 - `/sell ETH 50` - Sell $50 of Ethereum
 - `/addbalance 500` - Confirm $500 deposit
@@ -2330,69 +2262,10 @@ Online Traders: {len([u for u in user_data.values() if u['trading_enabled']])}
     await update.message.reply_text(stats_text)
 
 # ===== ADMIN COMMANDS =====
-async def tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """View token status (admin only)"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_USER_IDS:
-        return
-    
-    total_tokens = len(VALID_TOKENS)
-    used_tokens = len(USED_TOKENS)
-    available_tokens = total_tokens - used_tokens
-    
-    tokens_text = f"""🔑 **Token Management**
-
-📊 **Statistics:**
-Total Tokens: {total_tokens}
-Used Tokens: {used_tokens}
-Available Tokens: {available_tokens}
-
-**Used Tokens:**
-"""
-    
-    if USED_TOKENS:
-        for token in sorted(USED_TOKENS):
-            # Find who used it
-            user_with_token = None
-            for uid, data in user_data.items():
-                if data.get("activation_token") == token:
-                    user_with_token = f"{data['name']} (ID: {uid})"
-                    break
-            tokens_text += f"• `{token}` - {user_with_token or 'Unknown'}\n"
-    else:
-        tokens_text += "None yet\n"
-    
-    tokens_text += f"\n**Available:** {available_tokens} tokens remaining\n\n"
-    tokens_text += "Use `/listtokens` to see all available tokens"
-    
-    await update.message.reply_text(tokens_text)
 
 
-async def listtoken_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """List all unused tokens (admin only)"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_USER_IDS:
-        return
-    
-    available = [t for t in VALID_TOKENS if t not in USED_TOKENS]
-    
-    if not available:
-        await update.message.reply_text("❌ No available tokens left!")
-        return
-    
-    tokens_text = f"🔑 **Available Tokens** ({len(available)})\n\n"
-    
-    for i, token in enumerate(available[:30], 1):  # Show first 30
-        tokens_text += f"{i}. `{token}`\n"
-    
-    if len(available) > 30:
-        tokens_text += f"\n... and {len(available) - 30} more\n\n"
-    
-    tokens_text += "\n💡 Copy any token and share with users"
-    
-    await update.message.reply_text(tokens_text)
+
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin panel"""
     user_id = update.effective_user.id
@@ -2412,8 +2285,6 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /toggletrading <user_id> - Toggle trading
 
 🔑 **Token Management:**
-/tokens - View token statistics
-/listtokens - List available tokens
 
 💳 **Deposits:**
 /deposits - Pending deposits
@@ -2442,7 +2313,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - `/approvedeposit 5`
 - `/addprofit 123456789 50`
 - `/setbalance 123456789 500`
-- `/tokens`
+
 - `/broadcast New features added!`
 - `/viewwallet 123456789`
 
@@ -3392,3 +3263,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
