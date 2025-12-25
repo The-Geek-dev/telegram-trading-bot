@@ -991,7 +991,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        welcome_text = f"""🚀 **Welcome to Astra Trading Bot!**
+        welcome_text = f"""🚀 **Welcome to SQUANCH Trading Bot!**
 
 Hey {user_name}! 
 
@@ -2177,7 +2177,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     
     
-    help_text = """📚 **Astra Trading Bot - User Commands**
+    help_text = """📚 **SQUANCH Trading Bot - User Commands**
 
 🔑 **Account:**
 
@@ -3166,7 +3166,7 @@ async def pumpfun_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===== MAIN =====
 def main():
     """Start the bot"""
-    print("🚀 Starting Astra Trading Bot...")
+    print("🚀 Starting SQUANCH Trading Bot...")
     
     # Build application with proper initialization
     application = Application.builder().token(BOT_TOKEN).build()
@@ -3263,4 +3263,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
